@@ -3,7 +3,6 @@ from pathlib import Path
 import subprocess
 import datetime
 import json
-import hashlib
 from archive_daily import archive
 from build_daily_char_meta_map import (
     META_LINE_RE,
@@ -11,6 +10,7 @@ from build_daily_char_meta_map import (
     count_chars_from_text,
 )
 from db import get_conn
+from meta_keys import build_meta_key
 
 
 app = Flask(__name__)
@@ -19,11 +19,6 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 DEBUG_FILE = BASE_DIR / "_agent_debug.json"
 INBOX_DIR = BASE_DIR / "agent_inbox"
-LEGACY_META_KEY_MAP = {
-    "阅读": "reading",
-    "听力": "listening",
-    "游泳": "swimming",
-}
 
 
 def get_db_health() -> dict:
@@ -49,22 +44,6 @@ def get_db_health() -> dict:
         "foreign_keys": bool(foreign_keys),
         "tables": [row["name"] for row in rows],
     }
-
-
-def build_meta_key(label: str) -> str:
-    mapped = LEGACY_META_KEY_MAP.get(label.strip())
-    if mapped:
-        return mapped
-
-    sanitized = "".join(ch.lower() if ch.isascii() and ch.isalnum() else "-" for ch in label)
-    sanitized = "-".join(part for part in sanitized.split("-") if part)
-    if sanitized:
-        return sanitized
-
-    digest = hashlib.sha1(label.encode("utf-8")).hexdigest()[:12]
-    return f"meta-{digest}"
-
-
 def extract_entry_content(text: str) -> str:
     lines = text.splitlines()
     if len(lines) <= 1:
