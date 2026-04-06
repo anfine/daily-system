@@ -1,7 +1,8 @@
 from pathlib import Path
 import json
 import re
-from datetime import date
+
+from db import get_conn
 
 
 def iter_md_files(root: Path):
@@ -115,16 +116,67 @@ def build_daily_maps(archive_root: Path):
 
     return daily_char_map, daily_meta_map
 
+
+def build_daily_maps_from_db():
+    """
+    从 SQLite 构建：
+    - daily_char_map: {date: char_count}
+    - daily_meta_map: {date: {"metas":..., "notes":...}}
+    """
+    daily_char_map: dict[str, int] = {}
+    daily_meta_map: dict[str, dict] = {}
+
+    with get_conn() as conn:
+        entry_rows = conn.execute(
+            """
+            SELECT entry_date, char_count, meta_notes
+            FROM daily_entries
+            ORDER BY entry_date
+            """
+        ).fetchall()
+
+        meta_rows = conn.execute(
+            """
+            SELECT
+                s.entry_date,
+                s.meta_key,
+                s.count,
+                s.done,
+                m.label
+            FROM daily_meta_status AS s
+            JOIN metas AS m
+              ON m.meta_key = s.meta_key
+            ORDER BY s.entry_date, m.sort_order, m.id, s.id
+            """
+        ).fetchall()
+
+    for row in entry_rows:
+        entry_date = row["entry_date"]
+        daily_char_map[entry_date] = int(row["char_count"] or 0)
+        daily_meta_map[entry_date] = {
+            "metas": {},
+            "notes": (row["meta_notes"] or "").strip(),
+        }
+
+    for row in meta_rows:
+        entry_date = row["entry_date"]
+        if entry_date not in daily_meta_map:
+            daily_meta_map[entry_date] = {"metas": {}, "notes": ""}
+
+        label = row["label"] or row["meta_key"]
+        daily_meta_map[entry_date]["metas"][label] = {
+            "count": int(row["count"] or 0),
+            "done": bool(row["done"]),
+        }
+
+    return daily_char_map, daily_meta_map
+
 def main():
     BASE_DIR = Path(__file__).resolve().parent
-    ARCHIVE_ROOT = BASE_DIR / "daily_logs"
     OUT_CHAR_FILE = BASE_DIR / "daily_char_map.json"
     OUT_META_FILE = BASE_DIR / "daily_meta_map.json"
 
-    daily_char_map, daily_meta_map = build_daily_maps(ARCHIVE_ROOT)
-
-    # 处理过去没有"+"的问题
-    patch_done_before_cutover(daily_meta_map, cutover_date="2025-12-24")
+    daily_char_map, daily_meta_map = build_daily_maps_from_db()
 
     with open(OUT_CHAR_FILE, "w", encoding="utf-8") as f:
         json.dump(daily_char_map, f, ensure_ascii=False, indent=2)
