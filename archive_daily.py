@@ -1,8 +1,9 @@
 from pathlib import Path
-import os
 import re
 
 DATE_RE = re.compile(r'^\d{4}-\d{1,2}-\d{1,2}$')
+USER_HEADER_RE = re.compile(r"^#{2,3}\s+User$")
+ASSISTANT_HEADER_RE = re.compile(r"^#{2,3}\s+Assistant$")
 
 def segment(md_path: Path) -> list[list[str]]:
     with open(md_path, "r", encoding="utf-8") as f:
@@ -14,7 +15,7 @@ def segment(md_path: Path) -> list[list[str]]:
 
     while i < n:
         # 找到一段 User 开始
-        if lines[i].strip() != "### User":
+        if not USER_HEADER_RE.match(lines[i].strip()):
             i += 1
             continue
 
@@ -31,12 +32,12 @@ def segment(md_path: Path) -> list[list[str]]:
         block = [lines[i].strip()]
         i += 1
 
-        while i < n and lines[i].strip() != "### Assistant":
+        while i < n and not ASSISTANT_HEADER_RE.match(lines[i].strip()):
             block.append(lines[i])  # 保留原样（含空行）
             i += 1
 
         # 如果遇到 Assistant，就结算这个 block
-        if i < n and lines[i].strip() == "### Assistant":
+        if i < n and ASSISTANT_HEADER_RE.match(lines[i].strip()):
             blocks.append(block)
 
         i += 1  # 越过 ### Assistant，继续找下一段
@@ -64,13 +65,14 @@ def archive(content: list[str]) -> tuple[str, Path, str]:
     return timestamp, archive_path, "written"
 
 if __name__ == "__main__":
-    path = Path(r"E:\daily\inbox\chat-2026-01-11T11-06-44-420Z.md")
+    path = Path("/home/anfine/projects/daily-system/inbox/2026-04-05T07-25-27-459Z.md")
     blocks = segment(path)
     stats = {"written": 0, "skipped_same": 0, "failed": 0}
     failed = []
 
     for block in blocks:
         ts = block[0].strip()
+        status = None
         try:
             _, path, status = archive(block)
             stats[status] += 1

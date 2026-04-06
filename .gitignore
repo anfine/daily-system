@@ -1,5 +1,6 @@
 # raw daily data (private)
 daily_logs/
+daily_system.db
 
 # derived data (can be regenerated)
 *.json
@@ -11,7 +12,8 @@ agent_inbox
 tempCodeRunnerFile.py
 .venv/
 __pycache__/
-
+.codex
 
 # heatmap derived data
 heatmap/*.json
+

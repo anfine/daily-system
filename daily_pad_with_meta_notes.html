@@ -317,7 +317,10 @@
                         if (statusEl) statusEl.textContent = '失败：' + (data?.error || ('HTTP ' + resp.status));
                         return;
                     }
-                    if (statusEl) statusEl.textContent = '成功：' + (data?.message || 'ok');
+                    if (statusEl) {
+                        const warningText = data?.warning ? `（${data.warning}）` : '';
+                        statusEl.textContent = '成功：' + (data?.message || 'ok') + warningText;
+                    }
                 } catch (e) {
                     if (statusEl) statusEl.textContent = '失败：无法连接到 agent（' + (e?.message || e) + '）';
                 }
