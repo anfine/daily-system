@@ -1,0 +1,14 @@
+services:
+  agent:
+    build: .
+    image: daily-system-agent:latest
+    container_name: daily-system-agent
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./daily_system.db:/app/daily_system.db
+      - ./daily_logs:/app/daily_logs
+      - ./daily_meta_map.json:/app/daily_meta_map.json
+      - ./daily_char_map.json:/app/daily_char_map.json
+      - ./agent_inbox:/app/agent_inbox
