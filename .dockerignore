@@ -1,0 +1,20 @@
+.git
+.gitignore
+.codex
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# local runtime data
+daily_system.db
+daily_logs/
+daily_meta_map.json
+daily_char_map.json
+agent_inbox/
+inbox/
+_agent_debug.json
+
+# local-only notes and scratch files
+tempCodeRunnerFile.py

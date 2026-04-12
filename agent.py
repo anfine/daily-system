@@ -14,6 +14,7 @@ from meta_keys import build_meta_key
 
 
 app = Flask(__name__)
+app.json.ensure_ascii = False
 
 # ===== 路径统一从这里出发，避免写错 =====
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,6 +45,8 @@ def get_db_health() -> dict:
         "foreign_keys": bool(foreign_keys),
         "tables": [row["name"] for row in rows],
     }
+
+
 def extract_entry_content(text: str) -> str:
     lines = text.splitlines()
     if len(lines) <= 1:
@@ -56,6 +59,102 @@ def extract_entry_content(text: str) -> str:
         body_lines.append(line)
 
     return "\n".join(body_lines).strip()
+
+
+def validate_date_arg(raw_date: str | None) -> tuple[str | None, str | None]:
+    if raw_date is None or raw_date.strip() == "":
+        return None, "missing required query param: date"
+
+    date_str = raw_date.strip()
+    try:
+        datetime.date.fromisoformat(date_str)
+    except ValueError:
+        return None, "invalid date format, expected YYYY-MM-DD"
+
+    return date_str, None
+
+
+def fetch_entry_payload(entry_date: str) -> dict | None:
+    with get_conn() as conn:
+        entry_row = conn.execute(
+            """
+            SELECT entry_date, content, char_count, meta_notes, created_at, updated_at
+            FROM daily_entries
+            WHERE entry_date = ?
+            """,
+            (entry_date,),
+        ).fetchone()
+
+        if not entry_row:
+            return None
+
+        meta_rows = conn.execute(
+            """
+            SELECT
+                m.meta_key,
+                m.label,
+                m.category,
+                m.unit,
+                m.enabled,
+                m.sort_order,
+                COALESCE(dms.count, 0) AS count,
+                COALESCE(dms.done, 0) AS done
+            FROM metas AS m
+            LEFT JOIN daily_meta_status AS dms
+                ON dms.meta_key = m.meta_key
+               AND dms.entry_date = ?
+            ORDER BY m.sort_order ASC, m.id ASC
+            """,
+            (entry_date,),
+        ).fetchall()
+
+    return {
+        "entry": {
+            "entry_date": entry_row["entry_date"],
+            "content": entry_row["content"],
+            "char_count": entry_row["char_count"],
+            "meta_notes": entry_row["meta_notes"],
+            "created_at": entry_row["created_at"],
+            "updated_at": entry_row["updated_at"],
+        },
+        "metas": [
+            {
+                "meta_key": row["meta_key"],
+                "label": row["label"],
+                "category": row["category"],
+                "unit": row["unit"],
+                "enabled": bool(row["enabled"]),
+                "sort_order": row["sort_order"],
+                "count": row["count"],
+                "done": bool(row["done"]),
+            }
+            for row in meta_rows
+        ],
+    }
+
+
+def fetch_metas_payload() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT meta_key, label, category, unit, enabled, sort_order, created_at
+            FROM metas
+            ORDER BY enabled DESC, sort_order ASC, id ASC
+            """
+        ).fetchall()
+
+    return [
+        {
+            "meta_key": row["meta_key"],
+            "label": row["label"],
+            "category": row["category"],
+            "unit": row["unit"],
+            "enabled": bool(row["enabled"]),
+            "sort_order": row["sort_order"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
 
 
 def ensure_meta(conn, label: str) -> str:
@@ -140,6 +239,12 @@ def add_cors_headers(resp):
     return resp
 
 
+@app.errorhandler(500)
+def handle_internal_server_error(err):
+    app.logger.exception("Unhandled server error: %s", err)
+    return jsonify({"ok": False, "error": "internal server error"}), 500
+
+
 @app.get("/ping")
 def ping():
     """
@@ -156,6 +261,30 @@ def db_health():
     验证 agent 能否成功接入 SQLite
     """
     return jsonify(get_db_health())
+
+
+@app.get("/entry")
+def get_entry():
+    """
+    按日期读取单天 entry，并带上当天 meta 状态。
+    """
+    entry_date, error = validate_date_arg(request.args.get("date"))
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+
+    payload = fetch_entry_payload(entry_date)
+    if payload is None:
+        return jsonify({"ok": False, "error": "entry not found", "date": entry_date}), 404
+
+    return jsonify({"ok": True, **payload})
+
+
+@app.get("/metas")
+def get_metas():
+    """
+    读取所有 meta 定义，供前端初始化配置使用。
+    """
+    return jsonify({"ok": True, "metas": fetch_metas_payload()})
 
 
 @app.post("/echo")

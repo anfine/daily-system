@@ -8,12 +8,13 @@ daily_system.db
 # temporary / workspace
 inbox/
 old_script/
-agent_inbox
+agent_inbox/
+_agent_debug.json
 tempCodeRunnerFile.py
 .venv/
 __pycache__/
 .codex
+*.pyc
 
 # heatmap derived data
 heatmap/*.json
-
