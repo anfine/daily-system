@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>凡音 · DevOps 学习记录</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#0b1220;color:#e6eaf2}
+    .wrap{max-width:860px;margin:48px auto;padding:0 16px}
+    header{margin-bottom:24px}
+    h1{font-size:28px;margin:0 0 8px}
+    p{line-height:1.7;margin:6px 0}
+    .card{background:#121a2b;border:1px solid #22304a;border-radius:12px;padding:18px;margin:14px 0}
+    a{color:#7fb3ff;text-decoration:none} a:hover{text-decoration:underline}
+    code{background:#101826;border:1px solid #1d2a42;border-radius:6px;padding:2px 6px}
+    footer{opacity:.7;margin-top:28px;font-size:14px}
+
+    /* 下面是新增：让卡片标题行更像“模块头” */
+    .cardHead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .cardHead h2{margin:0}
+    .subtle{opacity:.8;font-size:14px}
+    .iframeWrap{margin-top:10px;border:1px solid #22304a;border-radius:10px;overflow:hidden;background:#0b1220}
+    iframe{display:block;width:100%;height:460px;border:0;background:#0b1220}
+    @media (max-width:520px){
+      iframe{height:520px;}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>凡音 · 个人服务器</h1>
+      <p>目标：把 DevOps 学习变成可访问、可维护的线上资产。</p>
+    </header>
+
+    <section class="card">
+      <div class="cardHead">
+        <h2>最近在做</h2>
+      </div>
+      <ul>
+        <li>服务器初始化、UFW、防火墙基线（22/80）</li>
+        <li>Nginx 部署静态站点与日志观察</li>
+        <li>本地 → 远程的简易部署链路（scp + reload）</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="cardHead">
+        <h2>项目链接</h2>
+      </div>
+      <ul>
+        <li><a href="https://github.com/toph312" target="_blank" rel="noreferrer">GitHub · toph312</a></li>
+        <li><a href="#" aria-disabled="true">日志分析（nginx_log_analyser）</a></li>
+        <li><a href="#" aria-disabled="true">系统指标采集（server_performance_stats）</a></li>
+      </ul>
+      <p>注：上面两个仓库链接等你整理好再替换。</p>
+    </section>
+
+    <!-- 新增：日历热力图 -->
+    <section class="card">
+      <div class="cardHead">
+        <h2>每日记录 · 日历热力图</h2>
+        <div class="subtle">
+          <a href="/calendar/" target="_blank" rel="noreferrer">新窗口打开</a>
+        </div>
+      </div>
+      <p class="subtle">说明：字符数热力图</p>
+      <div class="iframeWrap">
+        <iframe src="/calendar/" loading="lazy" title="Daily Char Heatmap"></iframe>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="cardHead">
+        <h2>部署信息（自动化占位）</h2>
+      </div>
+      <p>最近部署时间：<code><!-- 将来由脚本写入时间戳 --></code></p>
+    </section>
+
+    <footer>© <span id="y"></span> FanYin</footer>
+  </div>
+  <script>document.getElementById('y').textContent=new Date().getFullYear()</script>
+</body>
+</html>

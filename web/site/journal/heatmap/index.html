@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Heatmap | FanYin Station</title>
+  <link rel="stylesheet" href="../../assets/site.css">
+  <style>
+    .heatmap-page {
+      width: min(calc(100% - 32px), 1160px);
+      margin: 0 auto;
+      padding: 28px 0 48px;
+    }
+
+    .heatmap-intro {
+      margin-bottom: 18px;
+    }
+
+    .hm-wrap {
+      margin-top: 20px;
+      color: #e6edf3;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    .hm-card {
+      background: rgba(10, 18, 32, 0.84);
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      border-radius: 22px;
+      padding: 18px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(14px);
+    }
+
+    .hm-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .hm-head h2 {
+      font-size: 18px;
+      margin: 0;
+      font-weight: 650;
+    }
+
+    .hm-meta {
+      color: #9aa4af;
+      font-size: 13px;
+    }
+
+    .hm-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .hm-pills {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .hm-pill {
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      background: rgba(255, 255, 255, 0.03);
+      color: #e6edf3;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .hm-pill:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .hm-pill[aria-pressed="true"] {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .hm-hint {
+      color: #9aa4af;
+      font-size: 12px;
+    }
+
+    .hm-heatmap {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .hm-week-labels {
+      display: grid;
+      grid-template-rows: repeat(7, 14px);
+      gap: 3px;
+      padding-top: 20px;
+      user-select: none;
+      min-width: 32px;
+    }
+
+    .hm-week-label {
+      height: 14px;
+      line-height: 14px;
+      font-size: 11px;
+      color: #9aa4af;
+    }
+
+    .hm-grid-wrap {
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .hm-month-labels {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 14px;
+      gap: 3px;
+      height: 16px;
+      padding: 0 4px;
+      margin-bottom: 4px;
+      user-select: none;
+    }
+
+    .hm-month-label {
+      font-size: 11px;
+      color: #9aa4af;
+      line-height: 16px;
+      white-space: nowrap;
+      text-align: left;
+    }
+
+    .hm-grid {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 14px;
+      grid-template-rows: repeat(7, 14px);
+      gap: 3px;
+      align-items: start;
+      width: fit-content;
+      padding: 4px 4px 10px 4px;
+    }
+
+    .hm-cell {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      background: #161b22;
+      outline: 1px solid rgba(255, 255, 255, 0.04);
+      cursor: default;
+    }
+
+    .hm-lvl-0 { background: #161b22; }
+    .hm-lvl-1 { background: #0e4429; }
+    .hm-lvl-2 { background: #006d32; }
+    .hm-lvl-3 { background: #26a641; }
+    .hm-lvl-4 { background: #39d353; }
+
+    .hm-legend {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #9aa4af;
+      font-size: 12px;
+      margin-top: 10px;
+      user-select: none;
+    }
+
+    .hm-swatches {
+      display: flex;
+      gap: 3px;
+      align-items: center;
+    }
+
+    .hm-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      outline: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .hm-tooltip {
+      position: fixed;
+      pointer-events: none;
+      z-index: 999;
+      background: rgba(15, 22, 32, 0.95);
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      color: #e6edf3;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      line-height: 1.35;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      opacity: 0;
+      transition: opacity 0.08s ease, transform 0.08s ease;
+      white-space: nowrap;
+    }
+
+    .hm-tooltip .muted {
+      color: #9aa4af;
+    }
+
+    .hm-tooltip .meta-block {
+      margin-top: 6px;
+      text-align: left;
+      white-space: normal;
+    }
+
+    .hm-tooltip .meta-line {
+      display: block;
+      color: #e6edf3;
+    }
+
+    .hm-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      color: #9aa4af;
+      font-size: 12px;
+    }
+
+    .hm-stat {
+      padding: 8px 10px;
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    body.embedded-heatmap {
+      background: transparent;
+    }
+
+    body.embedded-heatmap::before,
+    body.embedded-heatmap .topbar,
+    body.embedded-heatmap .heatmap-intro,
+    body.embedded-heatmap .footer {
+      display: none;
+    }
+
+    body.embedded-heatmap .heatmap-page {
+      width: 100%;
+      padding: 0;
+    }
+
+    body.embedded-heatmap .hm-wrap {
+      margin-top: 0;
+    }
+
+    body.embedded-heatmap .hm-card {
+      box-shadow: none;
+    }
+  </style>
+  <script>
+    if (window.self !== window.top) {
+      document.documentElement.classList.add("embedded-heatmap-root");
+      document.addEventListener("DOMContentLoaded", () => {
+        document.body.classList.add("embedded-heatmap");
+      });
+    }
+  </script>
+</head>
+<body>
+  <main class="heatmap-page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">Journal / Public</div>
+        <div class="brand-title">Heatmap</div>
+      </div>
+      <nav class="nav" aria-label="热力图导航">
+        <a class="nav-link" href="../../">Home</a>
+        <a class="nav-link" href="../../pad/">Pad</a>
+      </nav>
+    </header>
+
+    <section class="panel heatmap-intro">
+      <h1 class="page-title" style="margin-top: 0;">热力图</h1>
+      <p class="page-intro">
+        查看每日字符数和 meta 状态。
+      </p>
+    </section>
+
+    <section class="hm-wrap">
+      <div class="hm-card">
+        <div class="hm-head">
+          <h2>Daily Char Heatmap</h2>
+          <div class="hm-meta" id="rangeMeta">Loading…</div>
+        </div>
+
+        <div class="hm-controls">
+          <div class="hm-pills" id="pills"></div>
+          <div class="hm-hint" id="hint"></div>
+        </div>
+
+        <div class="hm-heatmap">
+          <div class="hm-week-labels" aria-hidden="true">
+            <div class="hm-week-label">Sun</div>
+            <div class="hm-week-label"></div>
+            <div class="hm-week-label">Tue</div>
+            <div class="hm-week-label"></div>
+            <div class="hm-week-label">Thu</div>
+            <div class="hm-week-label"></div>
+            <div class="hm-week-label"></div>
+          </div>
+
+          <div class="hm-grid-wrap">
+            <div class="hm-month-labels" id="months"></div>
+            <div class="hm-grid" id="grid"></div>
+          </div>
+        </div>
+
+        <div class="hm-legend">
+          <span>Less</span>
+          <div class="hm-swatches">
+            <span class="hm-swatch" style="background:#161b22"></span>
+            <span class="hm-swatch" style="background:#0e4429"></span>
+            <span class="hm-swatch" style="background:#006d32"></span>
+            <span class="hm-swatch" style="background:#26a641"></span>
+            <span class="hm-swatch" style="background:#39d353"></span>
+          </div>
+          <span>More</span>
+        </div>
+
+        <div class="hm-row" id="stats"></div>
+      </div>
+    </section>
+
+    <footer class="footer" data-site-footer></footer>
+  </main>
+
+  <div class="hm-tooltip" id="tooltip"></div>
+
+  <script src="../../assets/site.js"></script>
+  <script>
+    const CHAR_MAP_URL = "../../data/daily_char_map.json";
+    const META_MAP_URL = "../../data/daily_meta_map.json";
+
+    const pad2 = (n) => String(n).padStart(2, "0");
+
+    function toISODate(d) {
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    }
+
+    function parseISODate(s) {
+      const [y, m, dd] = s.split("-").map(Number);
+      return new Date(y, m - 1, dd);
+    }
+
+    function addDays(d, n) {
+      const x = new Date(d);
+      x.setDate(x.getDate() + n);
+      return x;
+    }
+
+    function startOfWeekSunday(d) {
+      const x = new Date(d);
+      x.setDate(x.getDate() - x.getDay());
+      return x;
+    }
+
+    function endOfWeekSaturday(d) {
+      return addDays(startOfWeekSunday(d), 6);
+    }
+
+    function quantile(sortedArr, q) {
+      const n = sortedArr.length;
+      if (n === 0) return 0;
+      const pos = (n - 1) * q;
+      const base = Math.floor(pos);
+      const rest = pos - base;
+      if (sortedArr[base + 1] === undefined) return sortedArr[base];
+      return sortedArr[base] + rest * (sortedArr[base + 1] - sortedArr[base]);
+    }
+
+    function makeThresholds(values) {
+      const nonZero = values.filter((v) => v > 0).sort((a, b) => a - b);
+      if (nonZero.length === 0) return [0, 0, 0];
+      return [
+        quantile(nonZero, 0.25),
+        quantile(nonZero, 0.50),
+        quantile(nonZero, 0.75),
+      ];
+    }
+
+    function levelForValue(v, thresholds) {
+      if (v <= 0) return 0;
+      const [t1, t2, t3] = thresholds;
+      if (v <= t1) return 1;
+      if (v <= t2) return 2;
+      if (v <= t3) return 3;
+      return 4;
+    }
+
+    function monthShort(d) {
+      return d.toLocaleString("en-US", { month: "short" });
+    }
+
+    function maxDateFromKeys(keys) {
+      return parseISODate(keys[keys.length - 1]);
+    }
+
+    function pickWindow(allKeys, mode) {
+      const minAll = parseISODate(allKeys[0]);
+      const maxAll = maxDateFromKeys(allKeys);
+
+      if (mode === "all") {
+        return { min: minAll, max: maxAll, label: "All time" };
+      }
+      const days = Number(mode);
+      const winMin = addDays(maxAll, -(days - 1));
+      const min = winMin < minAll ? minAll : winMin;
+      return { min, max: maxAll, label: `Last ${days} days` };
+    }
+
+    function subsetValues(raw, minD, maxD) {
+      const vals = [];
+      let d = new Date(minD);
+      while (d <= maxD) {
+        vals.push(Number(raw[toISODate(d)] || 0));
+        d = addDays(d, 1);
+      }
+      return vals;
+    }
+
+    function escapeHTML(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderMetaBlock(entry) {
+      if (!entry) return "";
+      const lines = [];
+      const metas = entry.metas || {};
+      for (const [name, info] of Object.entries(metas)) {
+        const badge = info && info.done ? "✅" : "⬜";
+        const count =
+          info && Object.prototype.hasOwnProperty.call(info, "count")
+            ? ` (${info.count})`
+            : "";
+        lines.push(`<span class="meta-line">${badge} ${escapeHTML(name)}${count}</span>`);
+      }
+      if (!lines.length) return "";
+      return `<div class="meta-block">${lines.join("")}</div>`;
+    }
+
+    const tooltip = document.getElementById("tooltip");
+    const VIEWPORT_PADDING = 8;
+    const CURSOR_OFFSET = 14;
+    const HIDE_DELAY = 140;
+    let hideTimer = null;
+
+    function positionTooltip(e) {
+      const rect = tooltip.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      const desiredLeft = e.clientX - rect.width / 2;
+      const clampedLeft = Math.min(
+        Math.max(desiredLeft, VIEWPORT_PADDING),
+        Math.max(VIEWPORT_PADDING, vw - rect.width - VIEWPORT_PADDING)
+      );
+
+      const aboveTop = e.clientY - CURSOR_OFFSET - rect.height;
+      const belowTop = e.clientY + CURSOR_OFFSET;
+      const fitsAbove = aboveTop >= VIEWPORT_PADDING;
+      const fitsBelow = belowTop + rect.height <= vh - VIEWPORT_PADDING;
+      const chosenTop = fitsAbove || !fitsBelow ? aboveTop : belowTop;
+      const clampedTop = Math.min(
+        Math.max(chosenTop, VIEWPORT_PADDING),
+        Math.max(VIEWPORT_PADDING, vh - rect.height - VIEWPORT_PADDING)
+      );
+
+      tooltip.style.left = `${clampedLeft}px`;
+      tooltip.style.top = `${clampedTop}px`;
+    }
+
+    function showTooltip(e, html) {
+      clearTimeout(hideTimer);
+      tooltip.innerHTML = html;
+      tooltip.style.opacity = "1";
+      positionTooltip(e);
+    }
+
+    function scheduleHideTooltip() {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        tooltip.style.opacity = "0";
+      }, HIDE_DELAY);
+    }
+
+    const RANGE_MODES = [
+      { id: "7", text: "7d" },
+      { id: "30", text: "30d" },
+      { id: "90", text: "90d" },
+      { id: "180", text: "180d" },
+      { id: "365", text: "1y" },
+      { id: "all", text: "all" },
+    ];
+
+    let RAW = null;
+    let ALL_KEYS = [];
+    let ACTIVE_MODE = "365";
+    let META = {};
+
+    function renderPills() {
+      const pills = document.getElementById("pills");
+      pills.innerHTML = "";
+      for (const mode of RANGE_MODES) {
+        const btn = document.createElement("button");
+        btn.className = "hm-pill";
+        btn.type = "button";
+        btn.textContent = mode.text;
+        btn.setAttribute("aria-pressed", String(mode.id === ACTIVE_MODE));
+        btn.addEventListener("click", () => {
+          ACTIVE_MODE = mode.id;
+          renderPills();
+          renderHeatmap();
+        });
+        pills.appendChild(btn);
+      }
+    }
+
+    function renderHeatmap() {
+      if (!RAW || !ALL_KEYS.length) return;
+
+      const { min, max, label } = pickWindow(ALL_KEYS, ACTIVE_MODE);
+      const start = startOfWeekSunday(min);
+      const end = endOfWeekSaturday(max);
+      const windowVals = subsetValues(RAW, min, max);
+      const thresholds = makeThresholds(windowVals);
+
+      const total = windowVals.reduce((a, b) => a + b, 0);
+      const maxV = windowVals.length ? Math.max(...windowVals) : 0;
+      const nonZeroDays = windowVals.filter((v) => v > 0).length;
+
+      document.getElementById("rangeMeta").textContent =
+        `${toISODate(min)} → ${toISODate(max)} (display: ${toISODate(start)} → ${toISODate(end)})`;
+      document.getElementById("hint").textContent = label;
+      document.getElementById("stats").innerHTML = `
+        <div class="hm-stat">days: <b>${windowVals.length}</b></div>
+        <div class="hm-stat">non-zero: <b>${nonZeroDays}</b></div>
+        <div class="hm-stat">total chars: <b>${total}</b></div>
+        <div class="hm-stat">max/day: <b>${maxV}</b></div>
+      `;
+
+      const grid = document.getElementById("grid");
+      const months = document.getElementById("months");
+      grid.innerHTML = "";
+      months.innerHTML = "";
+
+      let curWeekStart = new Date(start);
+      let lastMonth = -1;
+
+      while (curWeekStart <= end) {
+        const thisMonth = curWeekStart.getMonth();
+        const m = document.createElement("div");
+        m.className = "hm-month-label";
+        m.textContent = thisMonth !== lastMonth ? monthShort(curWeekStart) : "";
+        months.appendChild(m);
+        lastMonth = thisMonth;
+
+        for (let dow = 0; dow < 7; dow++) {
+          const d = addDays(curWeekStart, dow);
+          const key = toISODate(d);
+          const inWindow = d >= min && d <= max;
+          const value = inWindow ? Number(RAW[key] || 0) : 0;
+          const lvl = levelForValue(value, thresholds);
+          const meta = META[key];
+          const metaHTML = renderMetaBlock(meta);
+
+          const cell = document.createElement("div");
+          cell.className = `hm-cell hm-lvl-${lvl}`;
+          cell.dataset.date = key;
+          cell.dataset.value = String(value);
+
+          cell.addEventListener("mouseenter", (e) => {
+            const metaPart = metaHTML ? `<br>${metaHTML}` : "";
+            showTooltip(e, `<b>${key}</b><br><span class="muted">${value} chars</span>${metaPart}`);
+          });
+
+          cell.addEventListener("mousemove", (e) => {
+            positionTooltip(e);
+          });
+
+          cell.addEventListener("mouseleave", () => {
+            scheduleHideTooltip();
+          });
+
+          grid.appendChild(cell);
+        }
+
+        curWeekStart = addDays(curWeekStart, 7);
+      }
+    }
+
+    async function main() {
+      const [charRes, metaRes] = await Promise.all([
+        fetch(CHAR_MAP_URL, { cache: "no-store" }),
+        fetch(META_MAP_URL, { cache: "no-store" }).catch(() => null),
+      ]);
+
+      if (!charRes.ok) {
+        document.getElementById("rangeMeta").textContent =
+          "Failed to load site data/daily_char_map.json";
+        return;
+      }
+
+      RAW = await charRes.json();
+      META = metaRes && metaRes.ok ? await metaRes.json() : {};
+      ALL_KEYS = Object.keys(RAW).sort();
+
+      if (!ALL_KEYS.length) {
+        document.getElementById("rangeMeta").textContent = "No data";
+        return;
+      }
+
+      renderPills();
+      renderHeatmap();
+    }
+
+    main().catch((err) => {
+      console.error(err);
+      document.getElementById("rangeMeta").textContent = "Error: " + err.message;
+    });
+  </script>
+</body>
+</html>

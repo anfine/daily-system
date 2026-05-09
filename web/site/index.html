@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Anfine Station</title>
+  <link rel="stylesheet" href="./assets/site.css">
+</head>
+<body>
+  <main class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">Personal Station</div>
+        <div class="brand-title">Anfine</div>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <a class="nav-link" href="./">Home</a>
+        <a class="nav-link" href="./pad/">Pad</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="eyebrow">Daily System</div>
+      <h1>每日记录</h1>
+      <p>
+        查看记录状态，进入 Pad 写入当天内容。
+      </p>
+    </section>
+
+    <section class="grid">
+      <section class="panel span-12">
+        <div class="section-head">
+          <h2>监控</h2>
+          <span class="section-meta">待接入</span>
+        </div>
+        <div class="monitor-placeholder">
+          <div>
+            <div class="monitor-title">System Monitor</div>
+            <div class="monitor-copy">这里预留给运行状态、任务队列和同步结果。</div>
+          </div>
+          <div class="monitor-grid" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel span-12">
+        <div class="section-head">
+          <h2>Heatmap</h2>
+          <span class="section-meta">每日字符数与 meta 状态</span>
+        </div>
+        <iframe class="embed-frame heatmap-embed" src="./journal/heatmap/" title="Heatmap"></iframe>
+      </section>
+    </section>
+
+    <footer class="footer" data-site-footer></footer>
+  </main>
+  <script src="./assets/site.js"></script>
+</body>
+</html>

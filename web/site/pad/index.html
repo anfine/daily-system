@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pad | FanYin Station</title>
+  <link rel="stylesheet" href="../assets/site.css">
+  <style>
+    .pad-page {
+      width: min(calc(100% - 32px), 1160px);
+      margin: 0 auto;
+      padding: 28px 0 48px;
+      color: var(--text);
+    }
+
+    .pad-intro {
+      margin-bottom: 18px;
+    }
+
+    .pad-shell {
+      background: rgba(10, 18, 32, 0.84);
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      border-radius: 22px;
+      padding: 22px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(14px);
+    }
+
+    .pad-shell h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+    }
+
+    .pad-shell h3 {
+      margin: 24px 0 10px;
+      font-size: 18px;
+    }
+
+    .pad-shell textarea {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 14px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      padding: 12px 14px;
+    }
+
+    .pad-shell input {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+    }
+
+    .pad-shell button {
+      margin-left: 10px;
+      cursor: pointer;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+    }
+
+    .pad-shell button:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .pad-meta-item {
+      margin-bottom: 10px;
+    }
+
+    .pad-today-check {
+      margin-left: 10px;
+    }
+
+    .pad-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .pad-shell .status-strip {
+      margin-bottom: 18px;
+    }
+
+    .pad-status-text {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .pad-panel {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      border-radius: 12px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+
+    .pad-queue-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 8px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .pad-queue-item:first-child {
+      border-top: none;
+    }
+
+    .pad-queue-date {
+      font-weight: 600;
+      min-width: 110px;
+    }
+
+    .pad-queue-meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pad-preview {
+      white-space: pre-wrap;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px;
+      border: 1px solid rgba(143, 177, 255, 0.16);
+      border-radius: 12px;
+    }
+
+    dialog {
+      width: min(720px, 92vw);
+      border: 1px solid rgba(143, 177, 255, 0.24);
+      border-radius: 12px;
+      padding: 16px;
+      background: #0d1524;
+      color: var(--text);
+    }
+
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.45);
+    }
+
+    @media (max-width: 640px) {
+      .pad-page {
+        width: min(calc(100% - 24px), 1160px);
+        padding-top: 18px;
+        padding-bottom: 36px;
+      }
+
+      .pad-shell {
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="pad-page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">Private Pad</div>
+        <div class="brand-title">Pad</div>
+      </div>
+      <nav class="nav" aria-label="写字板导航">
+        <a class="nav-link" href="../">Home</a>
+      </nav>
+    </header>
+
+    <section class="panel pad-intro">
+      <h1 class="page-title" style="margin-top: 0;">写记录</h1>
+      <p class="page-intro">
+        编辑当天内容，保存到 Agent。
+      </p>
+    </section>
+
+    <section id="pad-login" class="panel pad-intro">
+      <h2>登录</h2>
+      <p>进入写入工作区。</p>
+      <div class="quick-links">
+        <button class="action-button primary" type="button" onclick="loginPad()">登录</button>
+      </div>
+    </section>
+
+    <section id="pad-workspace" class="pad-shell" hidden>
+      <h2>Daily Record</h2>
+      <div class="pad-toolbar">
+        <label for="api-base-url">Agent 地址</label>
+        <input id="api-base-url" type="text" placeholder="/api or http://127.0.0.1:8787" />
+        <button onclick="saveApiBaseUrl()">保存地址</button>
+        <button onclick="checkPadAgentStatus()">检查连接</button>
+        <button onclick="logoutPad()">退出</button>
+        <span id="api-base-status" class="pad-status-text"></span>
+      </div>
+
+      <div class="status-strip">
+        <div class="status-card">
+          <div class="status-label">Agent</div>
+          <div id="pad-agent-state" class="status-value status-warn">未检查</div>
+          <div id="pad-agent-detail" class="status-detail">等待连接测试</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Database</div>
+          <div id="pad-db-state" class="status-value status-warn">未检查</div>
+          <div id="pad-db-detail" class="status-detail">等待 /db_health 返回</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Metas</div>
+          <div id="pad-metas-state" class="status-value status-warn">未检查</div>
+          <div id="pad-metas-detail" class="status-detail">等待 /metas 返回</div>
+        </div>
+      </div>
+
+      <textarea id="daily-content" rows="15" placeholder="今天的记录……"></textarea>
+
+      <h3>Meta</h3>
+
+      <div class="pad-toolbar">
+        <button onclick="refreshMetasFromAgent()">从接口刷新 Metas</button>
+        <span id="meta-sync-status" class="pad-status-text"></span>
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <input id="new-meta-name" type="text" placeholder="新增一个 Meta（例如：阅读）" />
+        <button onclick="addMeta()">＋ 添加</button>
+      </div>
+
+      <div id="meta-list"></div>
+
+      <div style="margin-top: 10px;">
+        <button onclick="applyToday()">完成（计入已打勾项）</button>
+      </div>
+
+      <h3>Meta Notes（手动）</h3>
+      <textarea id="meta-notes" rows="6" placeholder="用于非积累型或复杂 meta，例如：&#10;nofap：14.5 → 15.4 → 16.3 → 17.3&#10;（这里手动维护就行）"></textarea>
+
+      <h3>导出预览</h3>
+      <div id="preview-container">
+        <pre id="preview-text" class="pad-preview"></pre>
+        <button onclick="copyPreview()">复制到剪贴板</button>
+        <button onclick="sendToAgent()">发送到Agent</button>
+        <div id="agent-status" style="margin-top: 8px; font-size: 13px;"></div>
+      </div>
+
+      <h3>按日期查看记录</h3>
+      <div class="pad-toolbar">
+        <input id="entry-date" type="date" />
+        <button onclick="showEntryByDate()">查看 entry</button>
+        <span id="entry-fetch-status" class="pad-status-text"></span>
+      </div>
+
+      <dialog id="entry-dialog">
+        <h3 id="entry-dialog-title">记录详情</h3>
+        <pre id="entry-dialog-content" class="pad-preview"></pre>
+        <div style="margin-top: 12px;">
+          <button onclick="closeEntryDialog()">关闭</button>
+        </div>
+      </dialog>
+
+      <h3>待同步队列（<span id="pending-count">0</span>）</h3>
+      <div class="pad-toolbar">
+        <button onclick="retryAllPending()">全部尝试同步</button>
+        <span id="pending-status" class="pad-status-text"></span>
+      </div>
+      <div id="pending-queue" class="pad-panel"></div>
+    </section>
+
+    <footer class="footer" data-site-footer></footer>
+  </main>
+
+  <script src="../assets/site.js"></script>
+  <script>
+    const DEFAULT_API_BASE_URL = window.location.protocol.startsWith("http")
+      ? `${window.location.origin}/api`
+      : "http://127.0.0.1:8787";
+    const DEFAULT_METAS = [
+      { key: "english", label: "英语" },
+      { key: "program", label: "Program" },
+      { key: "sport", label: "运动" },
+    ];
+    const META_LIST_KEY = "meta-list";
+    const META_NOTES_KEY = "meta-notes";
+    const PENDING_QUEUE_KEY = "pending-entry-queue";
+    const API_BASE_KEY = "daily-system-api-base";
+    const PAD_AUTH_KEY = "daily-system-pad-unlocked";
+    const todayChecks = {};
+    const todayApplied = {};
+
+    function loginPad() {
+      sessionStorage.setItem(PAD_AUTH_KEY, "1");
+      syncPadVisibility();
+      refreshMetasFromAgent();
+      checkPadAgentStatus();
+    }
+
+    function logoutPad() {
+      sessionStorage.removeItem(PAD_AUTH_KEY);
+      syncPadVisibility();
+    }
+
+    function syncPadVisibility() {
+      const unlocked = sessionStorage.getItem(PAD_AUTH_KEY) === "1";
+      const login = document.getElementById("pad-login");
+      const workspace = document.getElementById("pad-workspace");
+      if (login) login.hidden = unlocked;
+      if (workspace) workspace.hidden = !unlocked;
+    }
+
+    function getApiBaseUrl() {
+      const input = document.getElementById("api-base-url");
+      const fromInput = input?.value?.trim();
+      if (fromInput) return fromInput.replace(/\/+$/, "");
+
+      const saved = localStorage.getItem(API_BASE_KEY);
+      if (saved) return saved.replace(/\/+$/, "");
+
+      return DEFAULT_API_BASE_URL;
+    }
+
+    function saveApiBaseUrl() {
+      const input = document.getElementById("api-base-url");
+      const statusEl = document.getElementById("api-base-status");
+      const value = input?.value?.trim();
+      if (!value) {
+        localStorage.removeItem(API_BASE_KEY);
+        if (input) input.value = DEFAULT_API_BASE_URL;
+        if (statusEl) statusEl.textContent = "已恢复默认地址";
+        return;
+      }
+      localStorage.setItem(API_BASE_KEY, value);
+      if (statusEl) statusEl.textContent = "已保存 Agent 地址";
+    }
+
+    function setPadStatus(kind, state, detail, tone) {
+      const stateEl = document.getElementById(`pad-${kind}-state`);
+      const detailEl = document.getElementById(`pad-${kind}-detail`);
+      if (!stateEl || !detailEl) return;
+
+      stateEl.classList.remove("status-ok", "status-warn", "status-bad");
+      stateEl.classList.add(`status-${tone}`);
+      stateEl.textContent = state;
+      detailEl.textContent = detail;
+    }
+
+    async function readAgentJson(path) {
+      const resp = await fetch(getApiUrl(path));
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        throw new Error(data?.error || `HTTP ${resp.status}`);
+      }
+      return data;
+    }
+
+    async function checkPadAgentStatus() {
+      setPadStatus("agent", "检查中", "正在请求 /ping", "warn");
+      setPadStatus("db", "检查中", "正在请求 /db_health", "warn");
+      setPadStatus("metas", "检查中", "正在请求 /metas", "warn");
+
+      try {
+        const ping = await readAgentJson("/ping");
+        setPadStatus("agent", "在线", ping?.msg || "Agent 已响应", "ok");
+      } catch (e) {
+        setPadStatus("agent", "离线", e?.message || "无法连接 Agent", "bad");
+        setPadStatus("db", "跳过", "Agent 不在线，无法检查数据库", "warn");
+        setPadStatus("metas", "跳过", "Agent 不在线，无法读取 metas", "warn");
+        return;
+      }
+
+      try {
+        const health = await readAgentJson("/db_health");
+        const tables = Array.isArray(health?.tables) ? health.tables.join(", ") : "未知表";
+        const foreignKeys = health?.foreign_keys ? "foreign_keys on" : "foreign_keys off";
+        setPadStatus("db", health?.ok ? "可用" : "异常", `${foreignKeys}; ${tables}`, health?.ok ? "ok" : "bad");
+      } catch (e) {
+        setPadStatus("db", "异常", e?.message || "数据库检查失败", "bad");
+      }
+
+      try {
+        const metas = await readAgentJson("/metas");
+        const count = Array.isArray(metas?.metas) ? metas.metas.length : 0;
+        setPadStatus("metas", `${count} 个`, "已读取 meta 定义", count > 0 ? "ok" : "warn");
+      } catch (e) {
+        setPadStatus("metas", "异常", e?.message || "metas 读取失败", "bad");
+      }
+    }
+
+    function syncApiBaseInput() {
+      const input = document.getElementById("api-base-url");
+      if (!input) return;
+      input.value = localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE_URL;
+    }
+
+    function getMetaList() {
+      const saved = localStorage.getItem(META_LIST_KEY);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.warn("Failed to parse meta list, using defaults.", e);
+        }
+      }
+      localStorage.setItem(META_LIST_KEY, JSON.stringify(DEFAULT_METAS));
+      return [...DEFAULT_METAS];
+    }
+
+    function saveMetaList(list) {
+      localStorage.setItem(META_LIST_KEY, JSON.stringify(list));
+    }
+
+    function getApiUrl(path) {
+      return `${getApiBaseUrl()}${path}`;
+    }
+
+    function getEntryDateFromText(text) {
+      return String(text || "").split("\n")[0]?.trim() || "";
+    }
+
+    function getPendingQueue() {
+      const saved = localStorage.getItem(PENDING_QUEUE_KEY);
+      if (!saved) return {};
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch (e) {
+        console.warn("Failed to parse pending queue.", e);
+        return {};
+      }
+    }
+
+    function savePendingQueue(queue) {
+      localStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(queue));
+    }
+
+    function enqueuePendingEntry(text) {
+      const entryDate = getEntryDateFromText(text);
+      if (!entryDate) return;
+      const queue = getPendingQueue();
+      const existing = queue[entryDate];
+      queue[entryDate] = {
+        text,
+        created_at: existing?.created_at || new Date().toISOString(),
+      };
+      savePendingQueue(queue);
+      renderPendingQueue();
+    }
+
+    function removePendingEntry(entryDate) {
+      const queue = getPendingQueue();
+      delete queue[entryDate];
+      savePendingQueue(queue);
+      renderPendingQueue();
+    }
+
+    function formatPendingText(text) {
+      const lines = String(text || "").split("\n");
+      return lines.slice(0, 14).join("\n");
+    }
+
+    function renderPendingQueue() {
+      const queue = getPendingQueue();
+      const entries = Object.entries(queue).sort(([a], [b]) => a.localeCompare(b));
+      const countEl = document.getElementById("pending-count");
+      const container = document.getElementById("pending-queue");
+
+      if (countEl) countEl.textContent = String(entries.length);
+      if (!container) return;
+
+      if (entries.length === 0) {
+        container.innerHTML = '<div class="pad-queue-meta">当前没有待同步记录。</div>';
+        return;
+      }
+
+      container.innerHTML = "";
+
+      entries.forEach(([entryDate, item]) => {
+        const row = document.createElement("div");
+        row.className = "pad-queue-item";
+
+        const dateEl = document.createElement("span");
+        dateEl.className = "pad-queue-date";
+        dateEl.textContent = entryDate;
+
+        const metaEl = document.createElement("span");
+        metaEl.className = "pad-queue-meta";
+        metaEl.textContent = `缓存于 ${item.created_at || "未知时间"}`;
+
+        const viewBtn = document.createElement("button");
+        viewBtn.textContent = "查看";
+        viewBtn.addEventListener("click", () => showPendingEntry(entryDate));
+
+        const submitBtn = document.createElement("button");
+        submitBtn.textContent = "提交";
+        submitBtn.addEventListener("click", () => submitPendingEntry(entryDate));
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.textContent = "删除";
+        deleteBtn.addEventListener("click", () => {
+          const confirmed = confirm(`删除 ${entryDate} 的待同步记录？`);
+          if (!confirmed) return;
+          removePendingEntry(entryDate);
+        });
+
+        row.appendChild(dateEl);
+        row.appendChild(metaEl);
+        row.appendChild(viewBtn);
+        row.appendChild(submitBtn);
+        row.appendChild(deleteBtn);
+        container.appendChild(row);
+      });
+    }
+
+    async function refreshMetasFromAgent() {
+      const statusEl = document.getElementById("meta-sync-status");
+      if (statusEl) statusEl.textContent = "同步 metas 中...";
+
+      try {
+        const resp = await fetch(getApiUrl("/metas"));
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data?.ok) {
+          if (statusEl) statusEl.textContent = "刷新失败：" + (data?.error || ("HTTP " + resp.status));
+          return;
+        }
+
+        const nextList = (data.metas || []).map((meta) => ({
+          key: meta.meta_key,
+          label: meta.label,
+        }));
+
+        if (nextList.length > 0) {
+          saveMetaList(nextList);
+          renderMetas();
+        }
+
+        if (statusEl) {
+          statusEl.textContent = `已从接口刷新 ${nextList.length} 个 meta`;
+        }
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "刷新失败：无法连接到 agent（" + (e?.message || e) + "）";
+      }
+    }
+
+    function renderMetas() {
+      const metaList = getMetaList();
+      const container = document.getElementById("meta-list");
+      container.innerHTML = "";
+
+      metaList.forEach((meta) => {
+        const countKey = `meta-count-${meta.key}`;
+        const count = localStorage.getItem(countKey) || 0;
+        if (todayChecks[meta.key] === undefined) {
+          todayChecks[meta.key] = false;
+        }
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "pad-meta-item";
+
+        const label = document.createElement("span");
+        label.textContent = `${meta.label}：已完成 `;
+
+        const countSpan = document.createElement("span");
+        countSpan.id = `${meta.key}-count`;
+        countSpan.innerText = count;
+
+        const suffix = document.createElement("span");
+        suffix.textContent = " 天";
+
+        const todayCheck = document.createElement("input");
+        todayCheck.type = "checkbox";
+        todayCheck.className = "pad-today-check";
+        todayCheck.id = `${meta.key}-today`;
+        todayCheck.checked = todayChecks[meta.key];
+        todayCheck.title = "勾选后点击下方“完成”才会计入";
+        todayCheck.addEventListener("change", (e) => {
+          todayChecks[meta.key] = e.target.checked;
+          updatePreview();
+        });
+
+        const setButton = document.createElement("button");
+        setButton.textContent = "设定";
+        setButton.addEventListener("click", () => {
+          const newVal = prompt("请输入要设定的天数（非负整数）", count);
+          if (newVal === null) return;
+          setCount(meta.key, newVal);
+        });
+
+        const deleteButton = document.createElement("button");
+        deleteButton.textContent = "删除";
+        deleteButton.addEventListener("click", () => deleteMeta(meta.key));
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(countSpan);
+        wrapper.appendChild(suffix);
+        wrapper.appendChild(todayCheck);
+        wrapper.appendChild(setButton);
+        wrapper.appendChild(deleteButton);
+
+        container.appendChild(wrapper);
+      });
+
+      updatePreview();
+    }
+
+    function increment(key) {
+      const countKey = `meta-count-${key}`;
+      let count = localStorage.getItem(countKey);
+      count = count ? parseInt(count, 10) + 1 : 1;
+      localStorage.setItem(countKey, count);
+      const span = document.getElementById(`${key}-count`);
+      if (span) span.innerText = count;
+      updatePreview();
+    }
+
+    function setCount(key, value) {
+      const countKey = `meta-count-${key}`;
+      const parsed = parseInt(value, 10);
+      if (Number.isNaN(parsed) || parsed < 0) {
+        alert("请输入有效的非负整数");
+        return;
+      }
+      localStorage.setItem(countKey, parsed);
+      const span = document.getElementById(`${key}-count`);
+      if (span) span.innerText = parsed;
+      updatePreview();
+    }
+
+    function deleteMeta(key) {
+      const metaList = getMetaList();
+      const target = metaList.find((m) => m.key === key);
+      if (!target) return;
+      const confirmed = confirm(`删除 "${target.label}" ？操作不可撤销`);
+      if (!confirmed) return;
+
+      const nextList = metaList.filter((m) => m.key !== key);
+      saveMetaList(nextList);
+      localStorage.removeItem(`meta-count-${key}`);
+      delete todayChecks[key];
+      renderMetas();
+      updatePreview();
+    }
+
+    function addMeta() {
+      const input = document.getElementById("new-meta-name");
+      const rawName = input.value.trim();
+      if (!rawName) return;
+
+      const metaList = getMetaList();
+      const exists = metaList.some((m) => m.label === rawName);
+      if (exists) {
+        alert("这个 Meta 已存在");
+        return;
+      }
+
+      const sanitized = rawName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      const key = sanitized || `meta-${Date.now()}`;
+
+      metaList.push({ key, label: rawName });
+      saveMetaList(metaList);
+      input.value = "";
+      renderMetas();
+    }
+
+    function applyToday() {
+      const metaList = getMetaList();
+      let anyChecked = false;
+      metaList.forEach((meta) => {
+        if (todayChecks[meta.key]) {
+          anyChecked = true;
+          increment(meta.key);
+          todayChecks[meta.key] = false;
+          const checkbox = document.getElementById(`${meta.key}-today`);
+          if (checkbox) checkbox.checked = false;
+          todayApplied[meta.key] = true;
+        }
+      });
+      if (!anyChecked) {
+        alert("请先勾选今日完成的项目");
+      }
+      updatePreview();
+    }
+
+    function getTodayString() {
+      const now = new Date();
+      const local = new Date(now);
+      if (local.getHours() < 4) {
+        local.setDate(local.getDate() - 1);
+      }
+      const offsetDate = new Date(local.getTime() - local.getTimezoneOffset() * 60000);
+      return offsetDate.toISOString().split("T")[0];
+    }
+
+    function buildPreviewText() {
+      const dateLine = getTodayString();
+      const content = document.getElementById("daily-content").value.trim() || "内容.....";
+      const metaLines = getMetaList().map((meta) => {
+        const count = localStorage.getItem(`meta-count-${meta.key}`) || 0;
+        const pendingMark = (todayChecks[meta.key] || todayApplied[meta.key]) ? " +" : "";
+        return `${meta.label}: ${count} 天${pendingMark}`;
+      });
+      const notes = (localStorage.getItem(META_NOTES_KEY) || "").trim();
+      const notesLines = notes ? ["---", notes] : [];
+      return [dateLine, content, ...metaLines, ...notesLines].join("\n");
+    }
+
+    function buildTodaySummary() {
+      const dateLine = `日期：${getTodayString()}`;
+      const metaList = getMetaList();
+      const finished = [];
+      const unfinished = [];
+      metaList.forEach((meta) => {
+        const done = todayChecks[meta.key] || todayApplied[meta.key];
+        (done ? finished : unfinished).push(meta.label);
+      });
+      const notes = (document.getElementById("meta-notes")?.value || localStorage.getItem(META_NOTES_KEY) || "").trim();
+      const notesLine = notes ? `notes（前50字）：${notes.slice(0, 50)}` : "";
+      const indent = "  ";
+      const finishedLine = `${indent}■ ${finished.length ? finished.join("、") : "（无）"}`;
+      const unfinishedLine = `${indent}□ ${unfinished.length ? unfinished.join("、") : "（无）"}`;
+      const tipLine = "确认后将覆盖写入今天的数据，可再次发送修正";
+      return [dateLine, finishedLine, unfinishedLine, notesLine, tipLine].filter(Boolean).join("\n");
+    }
+
+    function updatePreview() {
+      const preview = document.getElementById("preview-text");
+      if (preview) {
+        preview.textContent = buildPreviewText();
+      }
+    }
+
+    async function copyPreview() {
+      const text = buildPreviewText();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          alert("已复制到剪贴板");
+          return;
+        } catch (err) {
+          console.warn("Clipboard API failed, fallback to prompt.", err);
+        }
+      }
+      prompt("复制以下内容：", text);
+    }
+
+    async function sendToAgent() {
+      const statusEl = document.getElementById("agent-status");
+      const text = buildPreviewText();
+      const entryDate = getEntryDateFromText(text);
+      if (!confirm(buildTodaySummary())) return;
+      const url = getApiUrl("/save");
+      if (statusEl) statusEl.textContent = "发送中...";
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, source: "daily_pad", ts: new Date().toISOString() })
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok) {
+          if (statusEl) statusEl.textContent = "失败：" + (data?.error || ("HTTP " + resp.status));
+          return;
+        }
+        removePendingEntry(entryDate);
+        if (statusEl) {
+          const warningText = data?.warning ? `（${data.warning}）` : "";
+          statusEl.textContent = "成功：" + (data?.message || "ok") + warningText;
+        }
+      } catch (e) {
+        enqueuePendingEntry(text);
+        if (statusEl) statusEl.textContent = "无法连接到 agent，已加入待同步队列（" + (e?.message || e) + "）";
+      }
+    }
+
+    function buildEntryDialogText(data) {
+      const entry = data.entry || {};
+      const metas = data.metas || [];
+      const metaLines = metas.map((meta) =>
+        `${meta.label}: ${meta.count} ${meta.unit || ""}${meta.done ? " +" : ""}`.trim()
+      );
+
+      return [
+        `日期：${entry.entry_date || ""}`,
+        "",
+        "正文：",
+        entry.content || "（空）",
+        "",
+        "Metas：",
+        metaLines.length ? metaLines.join("\n") : "（无）",
+        "",
+        "Meta Notes：",
+        entry.meta_notes || "（无）",
+      ].join("\n");
+    }
+
+    function closeEntryDialog() {
+      const dialog = document.getElementById("entry-dialog");
+      if (dialog?.open) dialog.close();
+    }
+
+    function openTextDialog(title, text) {
+      const dialog = document.getElementById("entry-dialog");
+      const titleEl = document.getElementById("entry-dialog-title");
+      const contentEl = document.getElementById("entry-dialog-content");
+      if (titleEl) titleEl.textContent = title;
+      if (contentEl) contentEl.textContent = text;
+
+      if (dialog?.showModal) {
+        dialog.showModal();
+      } else {
+        alert(text);
+      }
+    }
+
+    function showPendingEntry(entryDate) {
+      const queue = getPendingQueue();
+      const item = queue[entryDate];
+      if (!item) return;
+      openTextDialog(`${entryDate} 的待同步记录`, formatPendingText(item.text));
+    }
+
+    async function submitPendingEntry(entryDate) {
+      const statusEl = document.getElementById("pending-status");
+      const queue = getPendingQueue();
+      const item = queue[entryDate];
+      if (!item) return;
+
+      if (statusEl) statusEl.textContent = `正在提交 ${entryDate}...`;
+      try {
+        const resp = await fetch(getApiUrl("/save"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: item.text, source: "pending_queue", ts: new Date().toISOString() })
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok) {
+          if (statusEl) statusEl.textContent = `${entryDate} 提交失败：` + (data?.error || ("HTTP " + resp.status));
+          return;
+        }
+
+        removePendingEntry(entryDate);
+        if (statusEl) statusEl.textContent = `${entryDate} 已提交到 agent`;
+      } catch (e) {
+        if (statusEl) statusEl.textContent = `${entryDate} 提交失败：无法连接到 agent（${e?.message || e}）`;
+      }
+    }
+
+    async function retryAllPending() {
+      const queue = getPendingQueue();
+      const dates = Object.keys(queue).sort();
+      const statusEl = document.getElementById("pending-status");
+
+      if (dates.length === 0) {
+        if (statusEl) statusEl.textContent = "当前没有待同步记录";
+        return;
+      }
+
+      if (statusEl) statusEl.textContent = `开始尝试同步 ${dates.length} 条记录...`;
+      for (const entryDate of dates) {
+        await submitPendingEntry(entryDate);
+      }
+    }
+
+    async function showEntryByDate() {
+      const dateInput = document.getElementById("entry-date");
+      const statusEl = document.getElementById("entry-fetch-status");
+      const entryDate = dateInput?.value?.trim();
+
+      if (!entryDate) {
+        if (statusEl) statusEl.textContent = "请先选择日期";
+        return;
+      }
+
+      if (statusEl) statusEl.textContent = "读取 entry 中...";
+
+      try {
+        const resp = await fetch(getApiUrl(`/entry?date=${encodeURIComponent(entryDate)}`));
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data?.ok) {
+          if (statusEl) statusEl.textContent = "读取失败：" + (data?.error || ("HTTP " + resp.status));
+          return;
+        }
+
+        openTextDialog(`${entryDate} 的记录`, buildEntryDialogText(data));
+        if (statusEl) statusEl.textContent = "读取成功";
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "读取失败：无法连接到 agent（" + (e?.message || e) + "）";
+      }
+    }
+
+    document.getElementById("daily-content").addEventListener("input", updatePreview);
+
+    const metaNotesEl = document.getElementById("meta-notes");
+    if (metaNotesEl) {
+      metaNotesEl.value = localStorage.getItem(META_NOTES_KEY) || "";
+      metaNotesEl.addEventListener("input", () => {
+        localStorage.setItem(META_NOTES_KEY, metaNotesEl.value);
+        updatePreview();
+      });
+    }
+
+    const entryDateEl = document.getElementById("entry-date");
+    if (entryDateEl) {
+      entryDateEl.value = getTodayString();
+    }
+
+    syncApiBaseInput();
+    syncPadVisibility();
+    renderMetas();
+    updatePreview();
+    renderPendingQueue();
+    if (sessionStorage.getItem(PAD_AUTH_KEY) === "1") {
+      refreshMetasFromAgent();
+      checkPadAgentStatus();
+    }
+  </script>
+</body>
+</html>

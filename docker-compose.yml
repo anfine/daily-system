@@ -1,4 +1,18 @@
 services:
+  web:
+    image: nginx:1.27-alpine
+    container_name: daily-system-web
+    restart: unless-stopped
+    depends_on:
+      - agent
+    ports:
+      - "8080:80"
+    volumes:
+      - ./web/site:/usr/share/nginx/html:ro
+      - ./web/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./daily_char_map.json:/usr/share/nginx/html/data/daily_char_map.json:ro
+      - ./daily_meta_map.json:/usr/share/nginx/html/data/daily_meta_map.json:ro
+
   agent:
     build: .
     image: daily-system-agent:latest
