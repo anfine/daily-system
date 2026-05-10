@@ -1,8 +1,12 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from pathlib import Path
 import subprocess
 import datetime
+import hmac
 import json
+import os
+import time
+import uuid
 from archive_daily import archive
 from build_daily_char_meta_map import (
     META_LINE_RE,
@@ -13,13 +17,120 @@ from db import get_conn
 from meta_keys import build_meta_key
 
 
-app = Flask(__name__)
-app.json.ensure_ascii = False
-
 # ===== 路径统一从这里出发，避免写错 =====
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def load_local_env() -> None:
+    """
+    Load local .env for direct `python agent.py` runs.
+    Docker Compose already reads .env and passes values through environment.
+    """
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, value)
+
+
+load_local_env()
+
+app = Flask(__name__)
+app.json.ensure_ascii = False
+app.secret_key = os.environ.get("ADMIN_SESSION_SECRET", "dev-change-me")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
 DEBUG_FILE = BASE_DIR / "_agent_debug.json"
 INBOX_DIR = BASE_DIR / "agent_inbox"
+QUEUE_DIR = BASE_DIR / "server_queue"
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+INTERNAL_AGENT_TOKEN = os.environ.get("INTERNAL_AGENT_TOKEN", "dev-internal-token")
+AUTH_EXEMPT_PATHS = {"/auth/login", "/auth/logout", "/auth/me"}
+ALLOWED_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+}
+LOGIN_FAILURE_WINDOW_SECONDS = 60
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_LOCK_SECONDS = 600
+login_failures: dict[str, dict] = {}
+
+
+def get_client_ip() -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def is_logged_in() -> bool:
+    return bool(session.get("admin_logged_in"))
+
+
+def is_internal_request() -> bool:
+    token = request.headers.get("X-Internal-Agent-Token", "")
+    return bool(INTERNAL_AGENT_TOKEN) and hmac.compare_digest(token, INTERNAL_AGENT_TOKEN)
+
+
+def get_login_lock_remaining(client_ip: str) -> int:
+    state = login_failures.get(client_ip)
+    if not state:
+        return 0
+
+    locked_until = float(state.get("locked_until", 0))
+    remaining = int(locked_until - time.time())
+    if remaining <= 0 and locked_until:
+        login_failures.pop(client_ip, None)
+        return 0
+    return max(0, remaining)
+
+
+def record_login_failure(client_ip: str) -> int:
+    now = time.time()
+    state = login_failures.get(client_ip)
+    if not state or now - float(state.get("first_failed_at", 0)) > LOGIN_FAILURE_WINDOW_SECONDS:
+        state = {"count": 0, "first_failed_at": now, "locked_until": 0}
+
+    state["count"] = int(state.get("count", 0)) + 1
+    if state["count"] >= LOGIN_FAILURE_LIMIT:
+        state["locked_until"] = now + LOGIN_LOCK_SECONDS
+
+    login_failures[client_ip] = state
+    return get_login_lock_remaining(client_ip)
+
+
+def clear_login_failures(client_ip: str) -> None:
+    login_failures.pop(client_ip, None)
+
+
+@app.before_request
+def require_admin_login():
+    if request.method == "OPTIONS":
+        return "", 204
+
+    if is_internal_request():
+        return None
+
+    if request.path in AUTH_EXEMPT_PATHS:
+        return None
+
+    if is_logged_in():
+        return None
+
+    return jsonify({"ok": False, "error": "login required"}), 401
 
 
 def get_db_health() -> dict:
@@ -72,6 +183,56 @@ def validate_date_arg(raw_date: str | None) -> tuple[str | None, str | None]:
         return None, "invalid date format, expected YYYY-MM-DD"
 
     return date_str, None
+
+
+def get_entry_date_from_text(text: str) -> str:
+    first_line = str(text or "").splitlines()[0].strip() if str(text or "").splitlines() else ""
+    try:
+        datetime.date.fromisoformat(first_line)
+        return first_line
+    except ValueError:
+        return datetime.date.today().isoformat()
+
+
+def build_queue_item_id(text: str) -> str:
+    entry_date = get_entry_date_from_text(text)
+    return f"{entry_date}_{datetime.datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:8]}.txt"
+
+
+def get_queue_item_path(item_id: str) -> Path:
+    if "/" in item_id or "\\" in item_id or item_id.startswith(".") or not item_id.endswith(".txt"):
+        raise ValueError("invalid queue item id")
+    return QUEUE_DIR / item_id
+
+
+def queue_text(text: str) -> dict:
+    if str(text).strip() == "":
+        raise ValueError("empty text")
+
+    QUEUE_DIR.mkdir(exist_ok=True)
+    item_id = build_queue_item_id(text)
+    item_path = QUEUE_DIR / item_id
+    item_path.write_text(str(text), encoding="utf-8")
+    return build_queue_item(item_path)
+
+
+def build_queue_item(item_path: Path) -> dict:
+    text = item_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    stat = item_path.stat()
+    return {
+        "id": item_path.name,
+        "entry_date": get_entry_date_from_text(text),
+        "created_at": datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "preview": "\n".join(lines[:8]),
+        "size": stat.st_size,
+    }
+
+
+def list_queue_items() -> list[dict]:
+    if not QUEUE_DIR.exists():
+        return []
+    return [build_queue_item(path) for path in sorted(QUEUE_DIR.glob("*.txt"))]
 
 
 def fetch_entry_payload(entry_date: str) -> dict | None:
@@ -137,9 +298,26 @@ def fetch_metas_payload() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT meta_key, label, category, unit, enabled, sort_order, created_at
-            FROM metas
-            ORDER BY enabled DESC, sort_order ASC, id ASC
+            SELECT
+                m.meta_key,
+                m.label,
+                m.category,
+                m.unit,
+                m.enabled,
+                m.sort_order,
+                m.created_at,
+                latest.entry_date AS latest_entry_date,
+                COALESCE(latest.count, 0) AS count,
+                COALESCE(latest.done, 0) AS done
+            FROM metas AS m
+            LEFT JOIN daily_meta_status AS latest
+                ON latest.meta_key = m.meta_key
+               AND latest.entry_date = (
+                   SELECT MAX(dms.entry_date)
+                   FROM daily_meta_status AS dms
+                   WHERE dms.meta_key = m.meta_key
+               )
+            ORDER BY m.enabled DESC, m.sort_order ASC, m.id ASC
             """
         ).fetchall()
 
@@ -152,6 +330,9 @@ def fetch_metas_payload() -> list[dict]:
             "enabled": bool(row["enabled"]),
             "sort_order": row["sort_order"],
             "created_at": row["created_at"],
+            "latest_entry_date": row["latest_entry_date"],
+            "count": row["count"],
+            "done": bool(row["done"]),
         }
         for row in rows
     ]
@@ -230,12 +411,77 @@ def scp_to_server(*paths):
         raise RuntimeError(err)
 
 
+def save_text_to_agent(text: str) -> dict:
+    if text is None or str(text).strip() == "":
+        raise ValueError("empty text")
+
+    INBOX_DIR.mkdir(exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_path = INBOX_DIR / f"{ts}.txt"
+    file_path.write_text(str(text), encoding="utf-8")
+
+    meta_map_path = BASE_DIR / "daily_meta_map.json"
+    char_map_path = BASE_DIR / "daily_char_map.json"
+
+    if meta_map_path.exists():
+        daily_meta_map = json.loads(meta_map_path.read_text(encoding="utf-8"))
+    else:
+        daily_meta_map = {}
+
+    if char_map_path.exists():
+        daily_char_map = json.loads(char_map_path.read_text(encoding="utf-8"))
+    else:
+        daily_char_map = {}
+
+    content = str(text).splitlines()
+    if not content:
+        raise ValueError("empty text")
+
+    log_date = content[0].strip()
+    archive(content)
+
+    meta = parse_meta_from_text(str(text))
+    char_count = count_chars_from_text(str(text))
+    persist_text_to_db(log_date, str(text), meta, char_count)
+
+    daily_meta_map[log_date] = meta
+    daily_char_map[log_date] = char_count
+
+    meta_map_path.write_text(
+        json.dumps(daily_meta_map, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+    char_map_path.write_text(
+        json.dumps(daily_char_map, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+
+    sync_warning = None
+    try:
+        scp_to_server(meta_map_path, char_map_path)
+    except Exception as e:
+        sync_warning = f"remote sync failed: {e}"
+
+    resp = {
+        "ok": True,
+        "message": "saved locally",
+        "date": log_date,
+    }
+    if sync_warning:
+        resp["warning"] = sync_warning
+
+    return resp
+
+
 @app.after_request
 def add_cors_headers(resp):
-    # 允许你的网页来源访问（先用 * 省事；后面想收紧再改成具体 origin）
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    origin = request.headers.get("Origin")
+    if origin and (not ALLOWED_ORIGINS or origin.rstrip("/") in ALLOWED_ORIGINS):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    resp.headers["Access-Control-Allow-Credentials"] = "true"
     return resp
 
 
@@ -243,6 +489,48 @@ def add_cors_headers(resp):
 def handle_internal_server_error(err):
     app.logger.exception("Unhandled server error: %s", err)
     return jsonify({"ok": False, "error": "internal server error"}), 500
+
+
+@app.post("/auth/login")
+def auth_login():
+    client_ip = get_client_ip()
+    lock_remaining = get_login_lock_remaining(client_ip)
+    if lock_remaining > 0:
+        return jsonify({
+            "ok": False,
+            "error": "too many failed login attempts",
+            "retry_after": lock_remaining,
+        }), 429
+
+    if not ADMIN_PASSWORD:
+        return jsonify({"ok": False, "error": "admin password is not configured"}), 500
+
+    data = request.get_json(silent=True) or {}
+    password = str(data.get("password", ""))
+    if not hmac.compare_digest(password, ADMIN_PASSWORD):
+        lock_remaining = record_login_failure(client_ip)
+        if lock_remaining > 0:
+            return jsonify({
+                "ok": False,
+                "error": "too many failed login attempts",
+                "retry_after": lock_remaining,
+            }), 429
+        return jsonify({"ok": False, "error": "invalid password"}), 401
+
+    clear_login_failures(client_ip)
+    session["admin_logged_in"] = True
+    return jsonify({"ok": True, "authenticated": True})
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    session.clear()
+    return jsonify({"ok": True, "authenticated": False})
+
+
+@app.get("/auth/me")
+def auth_me():
+    return jsonify({"ok": True, "authenticated": is_logged_in()})
 
 
 @app.get("/ping")
@@ -321,66 +609,71 @@ def save():
     """
     data = request.get_json(silent=True) or {}
     text = data.get("text")
-    if text is None or str(text).strip() == "":
-        return jsonify({"error": "empty text"}), 400
-
-    INBOX_DIR.mkdir(exist_ok=True)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_path = INBOX_DIR / f"{ts}.txt"
-    file_path.write_text(str(text), encoding="utf-8")
-
-    # 直接消费收到的文本，完成 meta/char map patch
-    meta_map_path = BASE_DIR / "daily_meta_map.json"
-    char_map_path = BASE_DIR / "daily_char_map.json"
-
-    if meta_map_path.exists():
-        daily_meta_map = json.loads(meta_map_path.read_text(encoding="utf-8"))
-    else:
-        daily_meta_map = {}
-
-    if char_map_path.exists():
-        daily_char_map = json.loads(char_map_path.read_text(encoding="utf-8"))
-    else:
-        daily_char_map = {}
-
-    content = str(text).splitlines()
-    if not content:
-        return jsonify({"error": "empty text"}), 400
-
-    log_date = content[0].strip()
-    archive(content)
-
-    meta = parse_meta_from_text(str(text))
-    char_count = count_chars_from_text(str(text))
-    persist_text_to_db(log_date, str(text), meta, char_count)
-
-    daily_meta_map[log_date] = meta
-    daily_char_map[log_date] = char_count
-
-    meta_map_path.write_text(
-        json.dumps(daily_meta_map, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
-    char_map_path.write_text(
-        json.dumps(daily_char_map, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
-
-    # === 自动 scp 到服务器（失败不影响本地保存） ===
-    sync_warning = None
     try:
-        scp_to_server(meta_map_path, char_map_path)
-    except Exception as e:
-        sync_warning = f"remote sync failed: {e}"
+        return jsonify(save_text_to_agent(str(text)))
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
-    resp = {
+
+@app.post("/queue")
+def create_queue_item():
+    data = request.get_json(silent=True) or {}
+    text = data.get("text")
+    try:
+        item = queue_text(str(text))
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "item": item})
+
+
+@app.get("/queue")
+def get_queue_items():
+    return jsonify({"ok": True, "items": list_queue_items()})
+
+
+@app.get("/queue/<item_id>")
+def get_queue_item(item_id):
+    try:
+        item_path = get_queue_item_path(item_id)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not item_path.exists():
+        return jsonify({"ok": False, "error": "queue item not found"}), 404
+    return jsonify({
         "ok": True,
-        "message": "saved locally",
-        "date": log_date,
-    }
-    if sync_warning:
-        resp["warning"] = sync_warning
+        "item": build_queue_item(item_path),
+        "text": item_path.read_text(encoding="utf-8"),
+    })
 
+
+@app.delete("/queue/<item_id>")
+def delete_queue_item(item_id):
+    try:
+        item_path = get_queue_item_path(item_id)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not item_path.exists():
+        return jsonify({"ok": False, "error": "queue item not found"}), 404
+    item_path.unlink()
+    return jsonify({"ok": True})
+
+
+@app.post("/queue/<item_id>/save")
+def save_queue_item(item_id):
+    try:
+        item_path = get_queue_item_path(item_id)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not item_path.exists():
+        return jsonify({"ok": False, "error": "queue item not found"}), 404
+
+    text = item_path.read_text(encoding="utf-8")
+    try:
+        resp = save_text_to_agent(text)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    item_path.unlink()
+    resp["queue_item_id"] = item_id
     return jsonify(resp)
 
 
@@ -455,4 +748,3 @@ def consume_inbox():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8787, debug=False)
-

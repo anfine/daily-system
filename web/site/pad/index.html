@@ -168,7 +168,7 @@
         <div class="brand-title">Pad</div>
       </div>
       <nav class="nav" aria-label="写字板导航">
-        <a class="nav-link" href="../">Home</a>
+        <a class="nav-link nav-link-primary" href="../">Home</a>
       </nav>
     </header>
 
@@ -181,10 +181,12 @@
 
     <section id="pad-login" class="panel pad-intro">
       <h2>登录</h2>
-      <p>进入写入工作区。</p>
-      <div class="quick-links">
-        <button class="action-button primary" type="button" onclick="loginPad()">登录</button>
-      </div>
+      <p>输入管理员密码进入写入工作区。</p>
+      <form class="pad-toolbar" onsubmit="loginPad(event)">
+        <input id="admin-password" type="password" autocomplete="current-password" placeholder="管理员密码" />
+        <button class="action-button primary" type="submit">登录</button>
+        <span id="login-status" class="pad-status-text"></span>
+      </form>
     </section>
 
     <section id="pad-workspace" class="pad-shell" hidden>
@@ -285,30 +287,72 @@
     ];
     const META_LIST_KEY = "meta-list";
     const META_NOTES_KEY = "meta-notes";
-    const PENDING_QUEUE_KEY = "pending-entry-queue";
     const API_BASE_KEY = "daily-system-api-base";
-    const PAD_AUTH_KEY = "daily-system-pad-unlocked";
+    let padAuthenticated = false;
     const todayChecks = {};
     const todayApplied = {};
 
-    function loginPad() {
-      sessionStorage.setItem(PAD_AUTH_KEY, "1");
-      syncPadVisibility();
-      refreshMetasFromAgent();
-      checkPadAgentStatus();
+    async function loginPad(event) {
+      event?.preventDefault();
+      const input = document.getElementById("admin-password");
+      const statusEl = document.getElementById("login-status");
+      const password = input?.value || "";
+
+      if (statusEl) statusEl.textContent = "登录中...";
+      try {
+        const resp = await apiFetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data?.ok) {
+          if (statusEl) statusEl.textContent = "登录失败：" + (data?.error || ("HTTP " + resp.status));
+          return;
+        }
+
+        padAuthenticated = true;
+        if (input) input.value = "";
+        syncPadVisibility();
+        refreshMetasFromAgent();
+        checkPadAgentStatus();
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "登录失败：无法连接到 agent（" + (e?.message || e) + "）";
+      }
     }
 
-    function logoutPad() {
-      sessionStorage.removeItem(PAD_AUTH_KEY);
+    async function logoutPad() {
+      try {
+        await apiFetch("/auth/logout", { method: "POST" });
+      } catch (e) {
+        console.warn("Logout request failed.", e);
+      }
+      padAuthenticated = false;
       syncPadVisibility();
     }
 
     function syncPadVisibility() {
-      const unlocked = sessionStorage.getItem(PAD_AUTH_KEY) === "1";
       const login = document.getElementById("pad-login");
       const workspace = document.getElementById("pad-workspace");
-      if (login) login.hidden = unlocked;
-      if (workspace) workspace.hidden = !unlocked;
+      if (login) login.hidden = padAuthenticated;
+      if (workspace) workspace.hidden = !padAuthenticated;
+    }
+
+    async function syncAuthState() {
+      try {
+        const resp = await apiFetch("/auth/me");
+        const data = await resp.json().catch(() => null);
+        padAuthenticated = Boolean(resp.ok && data?.authenticated);
+      } catch (e) {
+        padAuthenticated = false;
+      }
+
+      syncPadVisibility();
+      if (padAuthenticated) {
+        refreshMetasFromAgent();
+        checkPadAgentStatus();
+        renderPendingQueue();
+      }
     }
 
     function getApiBaseUrl() {
@@ -348,7 +392,7 @@
     }
 
     async function readAgentJson(path) {
-      const resp = await fetch(getApiUrl(path));
+      const resp = await apiFetch(path);
       const data = await resp.json().catch(() => null);
       if (!resp.ok) {
         throw new Error(data?.error || `HTTP ${resp.status}`);
@@ -416,44 +460,21 @@
       return `${getApiBaseUrl()}${path}`;
     }
 
+    function apiFetch(path, options = {}) {
+      const timeoutMs = options.timeoutMs ?? 5000;
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
+
+      return fetch(getApiUrl(path), {
+        credentials: "include",
+        signal: controller.signal,
+        ...fetchOptions,
+      }).finally(() => window.clearTimeout(timeoutId));
+    }
+
     function getEntryDateFromText(text) {
       return String(text || "").split("\n")[0]?.trim() || "";
-    }
-
-    function getPendingQueue() {
-      const saved = localStorage.getItem(PENDING_QUEUE_KEY);
-      if (!saved) return {};
-      try {
-        const parsed = JSON.parse(saved);
-        return parsed && typeof parsed === "object" ? parsed : {};
-      } catch (e) {
-        console.warn("Failed to parse pending queue.", e);
-        return {};
-      }
-    }
-
-    function savePendingQueue(queue) {
-      localStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(queue));
-    }
-
-    function enqueuePendingEntry(text) {
-      const entryDate = getEntryDateFromText(text);
-      if (!entryDate) return;
-      const queue = getPendingQueue();
-      const existing = queue[entryDate];
-      queue[entryDate] = {
-        text,
-        created_at: existing?.created_at || new Date().toISOString(),
-      };
-      savePendingQueue(queue);
-      renderPendingQueue();
-    }
-
-    function removePendingEntry(entryDate) {
-      const queue = getPendingQueue();
-      delete queue[entryDate];
-      savePendingQueue(queue);
-      renderPendingQueue();
     }
 
     function formatPendingText(text) {
@@ -461,29 +482,68 @@
       return lines.slice(0, 14).join("\n");
     }
 
-    function renderPendingQueue() {
-      const queue = getPendingQueue();
-      const entries = Object.entries(queue).sort(([a], [b]) => a.localeCompare(b));
+    async function enqueuePendingEntry(text) {
+      const resp = await apiFetch("/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, source: "daily_pad", ts: new Date().toISOString() }),
+      });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) {
+        throw new Error(data?.error || ("HTTP " + resp.status));
+      }
+      await renderPendingQueue();
+      return data.item;
+    }
+
+    async function queueAfterFailedSend(text, statusEl, reason) {
+      try {
+        await enqueuePendingEntry(text);
+        if (statusEl) statusEl.textContent = `发送失败，已加入服务器待同步队列（${reason}）`;
+      } catch (queueError) {
+        if (statusEl) {
+          statusEl.textContent = `发送失败，且无法写入服务器队列（${queueError?.message || queueError}）`;
+        }
+      }
+    }
+
+    async function renderPendingQueue() {
       const countEl = document.getElementById("pending-count");
       const container = document.getElementById("pending-queue");
 
-      if (countEl) countEl.textContent = String(entries.length);
       if (!container) return;
+      container.innerHTML = '<div class="pad-queue-meta">读取队列中...</div>';
 
-      if (entries.length === 0) {
+      let items = [];
+      try {
+        const resp = await apiFetch("/queue");
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data?.ok) {
+          throw new Error(data?.error || ("HTTP " + resp.status));
+        }
+        items = data.items || [];
+      } catch (e) {
+        if (countEl) countEl.textContent = "0";
+        container.innerHTML = `<div class="pad-queue-meta">读取队列失败：${e?.message || e}</div>`;
+        return;
+      }
+
+      if (countEl) countEl.textContent = String(items.length);
+
+      if (items.length === 0) {
         container.innerHTML = '<div class="pad-queue-meta">当前没有待同步记录。</div>';
         return;
       }
 
       container.innerHTML = "";
 
-      entries.forEach(([entryDate, item]) => {
+      items.forEach((item) => {
         const row = document.createElement("div");
         row.className = "pad-queue-item";
 
         const dateEl = document.createElement("span");
         dateEl.className = "pad-queue-date";
-        dateEl.textContent = entryDate;
+        dateEl.textContent = item.entry_date || item.id;
 
         const metaEl = document.createElement("span");
         metaEl.className = "pad-queue-meta";
@@ -491,18 +551,18 @@
 
         const viewBtn = document.createElement("button");
         viewBtn.textContent = "查看";
-        viewBtn.addEventListener("click", () => showPendingEntry(entryDate));
+        viewBtn.addEventListener("click", () => showPendingEntry(item.id));
 
         const submitBtn = document.createElement("button");
-        submitBtn.textContent = "提交";
-        submitBtn.addEventListener("click", () => submitPendingEntry(entryDate));
+        submitBtn.textContent = "发送到 Agent";
+        submitBtn.addEventListener("click", () => submitPendingEntry(item.id));
 
         const deleteBtn = document.createElement("button");
         deleteBtn.textContent = "删除";
-        deleteBtn.addEventListener("click", () => {
-          const confirmed = confirm(`删除 ${entryDate} 的待同步记录？`);
+        deleteBtn.addEventListener("click", async () => {
+          const confirmed = confirm(`删除 ${item.entry_date || item.id} 的待同步记录？`);
           if (!confirmed) return;
-          removePendingEntry(entryDate);
+          await deletePendingEntry(item.id);
         });
 
         row.appendChild(dateEl);
@@ -519,7 +579,7 @@
       if (statusEl) statusEl.textContent = "同步 metas 中...";
 
       try {
-        const resp = await fetch(getApiUrl("/metas"));
+        const resp = await apiFetch("/metas");
         const data = await resp.json().catch(() => null);
         if (!resp.ok || !data?.ok) {
           if (statusEl) statusEl.textContent = "刷新失败：" + (data?.error || ("HTTP " + resp.status));
@@ -533,14 +593,77 @@
 
         if (nextList.length > 0) {
           saveMetaList(nextList);
+          (data.metas || []).forEach((meta) => {
+            const key = meta.meta_key;
+            if (!key) return;
+            const count = Number(meta.count ?? meta.latest_count);
+            if (Number.isFinite(count)) {
+              localStorage.setItem(`meta-count-${key}`, String(count));
+            }
+          });
           renderMetas();
         }
 
+        await syncTodayEntryFromAgent({ silentNotFound: true });
+
         if (statusEl) {
-          statusEl.textContent = `已从接口刷新 ${nextList.length} 个 meta`;
+          statusEl.textContent = `已从接口刷新 ${nextList.length} 个 meta 和完成次数`;
         }
       } catch (e) {
         if (statusEl) statusEl.textContent = "刷新失败：无法连接到 agent（" + (e?.message || e) + "）";
+      }
+    }
+
+    function applyEntryToPad(data) {
+      const entry = data.entry || {};
+      const contentEl = document.getElementById("daily-content");
+      const metaNotesEl = document.getElementById("meta-notes");
+
+      if (contentEl) {
+        contentEl.value = entry.content || "";
+      }
+
+      if (metaNotesEl) {
+        metaNotesEl.value = entry.meta_notes || "";
+        localStorage.setItem(META_NOTES_KEY, metaNotesEl.value);
+      }
+
+      (data.metas || []).forEach((meta) => {
+        const key = meta.meta_key;
+        if (!key) return;
+
+        localStorage.setItem(`meta-count-${key}`, String(meta.count || 0));
+        todayChecks[key] = false;
+        todayApplied[key] = Boolean(meta.done);
+      });
+
+      renderMetas();
+      updatePreview();
+    }
+
+    async function syncTodayEntryFromAgent(options = {}) {
+      const statusEl = document.getElementById("entry-fetch-status");
+      const entryDate = getTodayString();
+
+      try {
+        const resp = await apiFetch(`/entry?date=${encodeURIComponent(entryDate)}`);
+        const data = await resp.json().catch(() => null);
+
+        if (!resp.ok || !data?.ok) {
+          if (!options.silentNotFound || resp.status !== 404) {
+            if (statusEl) statusEl.textContent = "读取失败：" + (data?.error || ("HTTP " + resp.status));
+          }
+          return false;
+        }
+
+        applyEntryToPad(data);
+        if (statusEl) statusEl.textContent = "已读取今天的 entry";
+        return true;
+      } catch (e) {
+        if (!options.silentNotFound && statusEl) {
+          statusEl.textContent = "读取失败：无法连接到 agent（" + (e?.message || e) + "）";
+        }
+        return false;
       }
     }
 
@@ -748,29 +871,34 @@
     async function sendToAgent() {
       const statusEl = document.getElementById("agent-status");
       const text = buildPreviewText();
-      const entryDate = getEntryDateFromText(text);
       if (!confirm(buildTodaySummary())) return;
-      const url = getApiUrl("/save");
       if (statusEl) statusEl.textContent = "发送中...";
       try {
-        const resp = await fetch(url, {
+        const resp = await apiFetch("/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, source: "daily_pad", ts: new Date().toISOString() })
         });
         const data = await resp.json().catch(() => null);
         if (!resp.ok) {
-          if (statusEl) statusEl.textContent = "失败：" + (data?.error || ("HTTP " + resp.status));
+          if (resp.status === 401 || resp.status === 403) {
+            if (statusEl) statusEl.textContent = "失败：" + (data?.error || ("HTTP " + resp.status));
+            return;
+          }
+          await queueAfterFailedSend(text, statusEl, data?.error || ("HTTP " + resp.status));
           return;
         }
-        removePendingEntry(entryDate);
+        await renderPendingQueue();
         if (statusEl) {
           const warningText = data?.warning ? `（${data.warning}）` : "";
-          statusEl.textContent = "成功：" + (data?.message || "ok") + warningText;
+          if (data?.queued) {
+            statusEl.textContent = "已加入服务器待同步队列";
+          } else {
+            statusEl.textContent = "成功：" + (data?.message || "ok") + warningText;
+          }
         }
       } catch (e) {
-        enqueuePendingEntry(text);
-        if (statusEl) statusEl.textContent = "无法连接到 agent，已加入待同步队列（" + (e?.message || e) + "）";
+        await queueAfterFailedSend(text, statusEl, e?.name === "AbortError" ? "请求超时" : (e?.message || e));
       }
     }
 
@@ -814,52 +942,77 @@
       }
     }
 
-    function showPendingEntry(entryDate) {
-      const queue = getPendingQueue();
-      const item = queue[entryDate];
-      if (!item) return;
-      openTextDialog(`${entryDate} 的待同步记录`, formatPendingText(item.text));
+    async function showPendingEntry(itemId) {
+      const statusEl = document.getElementById("pending-status");
+      try {
+        const resp = await apiFetch(`/queue/${encodeURIComponent(itemId)}`);
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data?.ok) {
+          throw new Error(data?.error || ("HTTP " + resp.status));
+        }
+        openTextDialog(`${data.item?.entry_date || itemId} 的待同步记录`, formatPendingText(data.text));
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "查看失败：" + (e?.message || e);
+      }
     }
 
-    async function submitPendingEntry(entryDate) {
+    async function deletePendingEntry(itemId) {
       const statusEl = document.getElementById("pending-status");
-      const queue = getPendingQueue();
-      const item = queue[entryDate];
-      if (!item) return;
-
-      if (statusEl) statusEl.textContent = `正在提交 ${entryDate}...`;
       try {
-        const resp = await fetch(getApiUrl("/save"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: item.text, source: "pending_queue", ts: new Date().toISOString() })
-        });
+        const resp = await apiFetch(`/queue/${encodeURIComponent(itemId)}`, { method: "DELETE" });
         const data = await resp.json().catch(() => null);
-        if (!resp.ok) {
-          if (statusEl) statusEl.textContent = `${entryDate} 提交失败：` + (data?.error || ("HTTP " + resp.status));
+        if (!resp.ok || !data?.ok) {
+          throw new Error(data?.error || ("HTTP " + resp.status));
+        }
+        if (statusEl) statusEl.textContent = "已删除待同步记录";
+        await renderPendingQueue();
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "删除失败：" + (e?.message || e);
+      }
+    }
+
+    async function submitPendingEntry(itemId) {
+      const statusEl = document.getElementById("pending-status");
+
+      if (statusEl) statusEl.textContent = `正在发送 ${itemId}...`;
+      try {
+        const resp = await apiFetch(`/queue/${encodeURIComponent(itemId)}/save`, { method: "POST" });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data?.ok) {
+          if (statusEl) statusEl.textContent = `${itemId} 发送失败：` + (data?.error || ("HTTP " + resp.status));
           return;
         }
 
-        removePendingEntry(entryDate);
-        if (statusEl) statusEl.textContent = `${entryDate} 已提交到 agent`;
+        if (statusEl) statusEl.textContent = `${data.date || itemId} 已发送到 Agent`;
+        await renderPendingQueue();
       } catch (e) {
-        if (statusEl) statusEl.textContent = `${entryDate} 提交失败：无法连接到 agent（${e?.message || e}）`;
+        if (statusEl) statusEl.textContent = `${itemId} 发送失败：无法连接到 Agent（${e?.message || e}）`;
       }
     }
 
     async function retryAllPending() {
-      const queue = getPendingQueue();
-      const dates = Object.keys(queue).sort();
       const statusEl = document.getElementById("pending-status");
+      let items = [];
+      try {
+        const resp = await apiFetch("/queue");
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data?.ok) {
+          throw new Error(data?.error || ("HTTP " + resp.status));
+        }
+        items = data.items || [];
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "读取队列失败：" + (e?.message || e);
+        return;
+      }
 
-      if (dates.length === 0) {
+      if (items.length === 0) {
         if (statusEl) statusEl.textContent = "当前没有待同步记录";
         return;
       }
 
-      if (statusEl) statusEl.textContent = `开始尝试同步 ${dates.length} 条记录...`;
-      for (const entryDate of dates) {
-        await submitPendingEntry(entryDate);
+      if (statusEl) statusEl.textContent = `开始尝试同步 ${items.length} 条记录...`;
+      for (const item of items) {
+        await submitPendingEntry(item.id);
       }
     }
 
@@ -876,7 +1029,7 @@
       if (statusEl) statusEl.textContent = "读取 entry 中...";
 
       try {
-        const resp = await fetch(getApiUrl(`/entry?date=${encodeURIComponent(entryDate)}`));
+        const resp = await apiFetch(`/entry?date=${encodeURIComponent(entryDate)}`);
         const data = await resp.json().catch(() => null);
         if (!resp.ok || !data?.ok) {
           if (statusEl) statusEl.textContent = "读取失败：" + (data?.error || ("HTTP " + resp.status));
@@ -907,14 +1060,9 @@
     }
 
     syncApiBaseInput();
-    syncPadVisibility();
     renderMetas();
     updatePreview();
-    renderPendingQueue();
-    if (sessionStorage.getItem(PAD_AUTH_KEY) === "1") {
-      refreshMetasFromAgent();
-      checkPadAgentStatus();
-    }
+    syncAuthState();
   </script>
 </body>
 </html>

@@ -36,6 +36,39 @@ python -m venv .venv
 
 Agent 默认监听 `http://127.0.0.1:8787`，可用 `GET /ping` 测试。
 
+管理员登录：
+- Docker 模式下由 `cloud-api` 负责登录、限速和云端队列。
+- 本地或 Docker 启动前设置 `ADMIN_PASSWORD`。
+- Docker 可同时设置 `ADMIN_SESSION_SECRET`，用于签名登录 session。
+- `POST /auth/login` 已按 IP 限速：1 分钟内失败 5 次后锁定 10 分钟。
+- Docker 模式下 `agent` 只通过 Docker 网络暴露给 `cloud-api`，不再把 `8787` 直接映射到宿主机。
+- 生产环境可设置 `ALLOWED_ORIGINS` 收紧 CORS，例如 `https://example.com`。
+- `LOCAL_AGENT_URL` 默认是 `http://agent:8787`；这是本地三容器开发用的临时转发地址。
+- `INTERNAL_AGENT_TOKEN` 用于本地开发时 `cloud-api` 到 `agent` 的内部转发。
+- 真实云端部署时，应改成本地 `agent` 主动访问云端 `cloud-api`，而不是云端主动访问本地 `agent`。
+
+```bash
+export ADMIN_PASSWORD="your-password"
+export ADMIN_SESSION_SECRET="replace-with-a-long-random-string"
+export ALLOWED_ORIGINS="https://example.com"
+export INTERNAL_AGENT_TOKEN="replace-with-another-long-random-string"
+docker compose up -d --build
+```
+
+本地开发验证：
+```bash
+docker compose up -d --build
+docker compose stop agent
+```
+
+此时 Pad 应仍可登录，保存内容会进入云端队列 `server_queue/`。重新启动本地 agent 后，可继续验证队列发送到 agent 的本地开发链路。
+
+下一阶段的真实云端同步模型：
+- 多端 Pad 写入内容到云端 `cloud-api` 队列。
+- 本地 `agent` 主动拉取云端队列。
+- `agent` 写入本地 SQLite / Markdown / JSON。
+- `agent` 上传最新展示 JSON 回云端，首页 Heatmap 读取云端 JSON。
+
 ## 使用说明
 ### 1) 归档（archive_daily.py）
 `archive_daily.py` 用于从聊天日志里按天切分，并落盘到 `daily_logs/YYYY/MM/DD.md`。
@@ -65,6 +98,13 @@ python build_daily_char_meta_map.py
 
 ### 3) Agent 接口（agent.py）
 
+认证接口：
+- `POST /auth/login`：提交管理员密码，成功后写入 session cookie
+- `POST /auth/logout`：退出登录
+- `GET /auth/me`：检查当前登录状态
+
+除 `/auth/*` 外，下面所有接口都需要管理员登录。
+
 基础健康检查：
 - `GET /ping`：检查 agent 是否存活，并返回数据库健康状态
 - `GET /db_health`：检查 SQLite 连通性、`foreign_keys` 状态和当前业务表
@@ -75,6 +115,11 @@ python build_daily_char_meta_map.py
 
 写入接口：
 - `POST /save`：保存文本并更新统计；参数 `text` 第一行是日期，格式 `YYYY-MM-DD`
+- `POST /queue`：把完整文本保存到服务器待同步文件队列
+- `GET /queue`：列出服务器待同步队列
+- `GET /queue/<id>`：读取队列项全文
+- `DELETE /queue/<id>`：删除队列项
+- `POST /queue/<id>/save`：将队列项交给 `/save` 流程处理，成功后删除队列项
 - `POST /consume_inbox`：批量消费 `agent_inbox/*.txt` 并更新统计
 - `POST /echo`：测试用，写入 `_agent_debug.json`
 

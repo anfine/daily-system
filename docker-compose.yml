@@ -4,7 +4,7 @@ services:
     container_name: daily-system-web
     restart: unless-stopped
     depends_on:
-      - agent
+      - cloud-api
     ports:
       - "8080:80"
     volumes:
@@ -13,16 +13,39 @@ services:
       - ./daily_char_map.json:/usr/share/nginx/html/data/daily_char_map.json:ro
       - ./daily_meta_map.json:/usr/share/nginx/html/data/daily_meta_map.json:ro
 
+  cloud-api:
+    build: .
+    image: daily-system-agent:latest
+    container_name: daily-system-cloud-api
+    restart: unless-stopped
+    command: ["python", "cloud_api.py"]
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-dev-change-me}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      LOCAL_AGENT_URL: ${LOCAL_AGENT_URL:-http://agent:8787}
+      INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN:-dev-internal-token}
+    expose:
+      - "8788"
+    volumes:
+      - ./server_queue:/app/server_queue
+
   agent:
     build: .
     image: daily-system-agent:latest
     container_name: daily-system-agent
     restart: unless-stopped
-    ports:
-      - "8787:8787"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-dev-change-me}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN:-dev-internal-token}
+    expose:
+      - "8787"
     volumes:
       - ./daily_system.db:/app/daily_system.db
       - ./daily_logs:/app/daily_logs
       - ./daily_meta_map.json:/app/daily_meta_map.json
       - ./daily_char_map.json:/app/daily_char_map.json
       - ./agent_inbox:/app/agent_inbox
+      - ./server_queue:/app/server_queue

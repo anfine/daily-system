@@ -9,6 +9,7 @@ daily_system.db
 inbox/
 old_script/
 agent_inbox/
+server_queue/
 _agent_debug.json
 tempCodeRunnerFile.py
 .venv/
@@ -18,3 +19,4 @@ __pycache__/
 
 # heatmap derived data
 heatmap/*.json
+.env
