@@ -18,30 +18,17 @@
       </nav>
     </header>
 
-    <section class="hero">
-      <div class="eyebrow"></div>
-      <h1></h1>
-      <p>
-        
-      </p>
-    </section>
-
     <section class="grid">
       <section class="panel span-12">
         <div class="section-head">
           <h2>监控</h2>
-          <span class="section-meta">待接入</span>
+          <span class="section-meta">Server / Docker / Sync</span>
         </div>
-        <div class="monitor-placeholder">
-          <div>
-            <div class="monitor-title">System Monitor</div>
-            <div class="monitor-copy">这里预留给运行状态、任务队列和同步结果。</div>
-          </div>
-          <div class="monitor-grid" aria-hidden="true">
-            <span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span>
-          </div>
-        </div>
+        <iframe
+          class="embed-frame monitor-embed"
+          src="./grafana/d/daily-system-overview/daily-system-overview?orgId=1&kiosk&theme=dark"
+          title="System Monitor"
+        ></iframe>
       </section>
 
       <section class="panel span-12">

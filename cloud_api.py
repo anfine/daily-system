@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, session
+from flask import Flask, Response, request, jsonify, session
 from pathlib import Path
 import datetime
 import hmac
@@ -45,7 +45,7 @@ META_SNAPSHOT_FILE = Path(os.environ.get("META_SNAPSHOT_FILE", BASE_DIR / "meta_
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 AGENT_SYNC_TOKEN = os.environ.get("AGENT_SYNC_TOKEN", "")
 AGENT_ONLINE_WINDOW_SECONDS = int(os.environ.get("AGENT_ONLINE_WINDOW_SECONDS", "120"))
-AUTH_EXEMPT_PATHS = {"/auth/login", "/auth/logout", "/auth/me"}
+AUTH_EXEMPT_PATHS = {"/auth/login", "/auth/logout", "/auth/me", "/metrics"}
 AGENT_SYNC_PATH_PREFIX = "/agent/sync/"
 ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
@@ -242,6 +242,29 @@ def list_queue_items() -> list[dict]:
     return [build_queue_item(path) for path in sorted(QUEUE_DIR.glob("*.txt"))]
 
 
+def render_metrics() -> str:
+    status = build_agent_status()
+    meta_snapshot = read_meta_snapshot()
+    metrics = [
+        "# HELP daily_queue_count Number of cloud queue items waiting for local agent sync.",
+        "# TYPE daily_queue_count gauge",
+        f"daily_queue_count {status['queue_count']}",
+        "# HELP daily_agent_online Whether the local agent checked in within the online window.",
+        "# TYPE daily_agent_online gauge",
+        f"daily_agent_online {1 if status['online'] else 0}",
+        "# HELP daily_agent_last_seen_age_seconds Seconds since the local agent last checked in.",
+        "# TYPE daily_agent_last_seen_age_seconds gauge",
+        f"daily_agent_last_seen_age_seconds {status['age_seconds'] if status['age_seconds'] is not None else -1}",
+        "# HELP daily_agent_processed_total Number of queue items reported processed by the local agent.",
+        "# TYPE daily_agent_processed_total counter",
+        f"daily_agent_processed_total {status['processed_total']}",
+        "# HELP daily_meta_snapshot_available Whether cloud-api has a meta snapshot uploaded by agent.",
+        "# TYPE daily_meta_snapshot_available gauge",
+        f"daily_meta_snapshot_available {1 if meta_snapshot else 0}",
+    ]
+    return "\n".join(metrics) + "\n"
+
+
 @app.before_request
 def require_admin_login():
     if request.method == "OPTIONS":
@@ -324,6 +347,11 @@ def auth_me():
 @app.get("/ping")
 def ping():
     return jsonify({"ok": True, "msg": "cloud api alive", "agent": build_agent_status()})
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(render_metrics(), mimetype="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.get("/agent/status")

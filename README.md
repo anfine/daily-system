@@ -81,6 +81,18 @@ python agent.py cloud-sync-once
 python agent.py cloud-sync-loop
 ```
 
+监控：
+- 云端 Compose 内置 `prometheus`、`grafana`、`node-exporter`、`cadvisor`。
+- 首页监控区嵌入 Grafana dashboard：`/grafana/d/daily-system-overview/daily-system-overview?orgId=1&kiosk&theme=dark`。
+- Grafana 通过 nginx 子路径 `/grafana/` 访问，默认允许匿名只读和 iframe 嵌入。
+- `cloud_api.py` 暴露 `/metrics`，Prometheus 会抓取队列数、agent 在线状态、last_seen 延迟和 meta 快照状态。
+- `web` 端口绑定为 `127.0.0.1:8080:80`，生产环境建议只由服务器反代访问，不直接开放 8080。
+
+启动云端网站和监控：
+```bash
+docker compose up -d --build web cloud-api prometheus grafana node-exporter cadvisor
+```
+
 ## 使用说明
 ### 1) 归档（archive_daily.py）
 `archive_daily.py` 用于从聊天日志里按天切分，并落盘到 `daily_logs/YYYY/MM/DD.md`。

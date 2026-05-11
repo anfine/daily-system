@@ -260,7 +260,11 @@ a {
 }
 
 .heatmap-embed {
-  height: 620px;
+  height: clamp(360px, 44vh, 460px);
+}
+
+.monitor-embed {
+  height: clamp(500px, 64vh, 620px);
 }
 
 .monitor-placeholder {
@@ -670,7 +674,7 @@ a {
   }
 
   .heatmap-embed {
-    height: 560px;
+    height: clamp(360px, 44vh, 460px);
   }
 
   .beian {

@@ -94,7 +94,7 @@
 状态：进行中
 
 当前真实结构：
-- 首页是公开展示页：监控占位 + 底部 Heatmap
+- 首页是公开展示页：Grafana 监控 + 底部 Heatmap
 - Pad 是管理员工作区：登录后写入云端队列、查看队列、检查 Agent 同步状态
 - Heatmap 暂时继续读导出的 JSON
 - 已新增 `cloud_api.py`，本地开发环境可以拆成 `web` / `cloud-api` / `agent`
@@ -126,11 +126,14 @@
 - Pad 状态已改为查看 cloud-api 的 Agent last_seen
 - agent 已主动上传 metas 快照，Pad 可从 cloud-api 刷新 meta 列表和完成次数
 - Pad 已移除远程查看 entry；历史记录只在本地 agent / 本地数据里查看
+- Docker Compose 已加入 Prometheus / Grafana / node-exporter / cadvisor
+- 首页监控区已嵌入 Grafana dashboard
 
 剩余核心问题：
 - meta 管理接口还没做
 - README / tasks 还要持续跟真实数据流同步
 - 历史 entry 不做云端读取，避免 cloud-api 持有完整本地记录
+- 监控栈还需要在服务器上拉镜像并实际联调
 
 原则：
 - 首页只展示，不直接暴露写入能力
@@ -207,6 +210,28 @@
 - agent 生成统计 JSON
 - agent 上传 JSON 回云端
 - 首页 Heatmap 读取云端最新 JSON
+
+---
+
+# Phase 4.7：首页监控
+
+状态：配置已完成，待服务器联调
+
+目标：
+- 云端本机监控服务器资源、Docker 容器和 daily-system 同步状态
+- 首页直接嵌入 Grafana dashboard
+- 不暴露 Prometheus / Grafana 内部端口，统一走站点反代
+
+任务：
+- ~~Docker Compose 增加 Prometheus~~
+- ~~Docker Compose 增加 Grafana~~
+- ~~Docker Compose 增加 node-exporter~~
+- ~~Docker Compose 增加 cadvisor~~
+- ~~cloud_api.py 增加 `/metrics`~~
+- ~~Prometheus 抓取 cloud-api / node-exporter / cadvisor~~
+- ~~Grafana provisioning 增加 Prometheus 数据源和 Daily System dashboard~~
+- ~~首页监控区嵌入 Grafana dashboard~~
+- 服务器实际启动并验证 dashboard 渲染
 
 ---
 
