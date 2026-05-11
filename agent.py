@@ -5,7 +5,10 @@ import datetime
 import hmac
 import json
 import os
+import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from archive_daily import archive
 from build_daily_char_meta_map import (
@@ -57,6 +60,10 @@ INBOX_DIR = BASE_DIR / "agent_inbox"
 QUEUE_DIR = BASE_DIR / "server_queue"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 INTERNAL_AGENT_TOKEN = os.environ.get("INTERNAL_AGENT_TOKEN", "dev-internal-token")
+CLOUD_API_URL = os.environ.get("CLOUD_API_URL", "").rstrip("/")
+AGENT_SYNC_TOKEN = os.environ.get("AGENT_SYNC_TOKEN", "")
+CLOUD_SYNC_INTERVAL_SECONDS = int(os.environ.get("CLOUD_SYNC_INTERVAL_SECONDS", "30"))
+LEGACY_SCP_REMOTE = os.environ.get("LEGACY_SCP_REMOTE", "").strip()
 AUTH_EXEMPT_PATHS = {"/auth/login", "/auth/logout", "/auth/me"}
 ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
@@ -400,7 +407,10 @@ def scp_to_server(*paths):
     """
     把指定文件 scp 到服务器
     """
-    remote = "root@139.224.80.186:/var/www/html/calendar"
+    if not LEGACY_SCP_REMOTE:
+        return
+
+    remote = LEGACY_SCP_REMOTE
 
     cmd = ["scp", *map(str, paths), remote]
 
@@ -471,6 +481,124 @@ def save_text_to_agent(text: str) -> dict:
         resp["warning"] = sync_warning
 
     return resp
+
+
+class CloudSyncError(Exception):
+    pass
+
+
+def request_cloud(path: str, method: str = "GET", payload: dict | None = None, timeout: float = 10) -> tuple[dict, int]:
+    if not CLOUD_API_URL:
+        raise CloudSyncError("CLOUD_API_URL is not configured")
+    if not AGENT_SYNC_TOKEN:
+        raise CloudSyncError("AGENT_SYNC_TOKEN is not configured")
+
+    data = None
+    headers = {
+        "Accept": "application/json",
+        "X-Agent-Sync-Token": AGENT_SYNC_TOKEN,
+    }
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(f"{CLOUD_API_URL}{path}", data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw) if raw else {}, resp.status
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8")
+        try:
+            payload = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            payload = {"error": raw or e.reason}
+        raise CloudSyncError(f"cloud api HTTP {e.code}: {payload.get('error') or payload}") from e
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        raise CloudSyncError(str(e)) from e
+
+
+def checkin_cloud(processed: int = 0, last_error: str | None = None) -> dict:
+    payload = {
+        "processed": processed,
+        "last_sync": datetime.datetime.now().isoformat(),
+        "last_error": last_error,
+    }
+    data, _status = request_cloud("/agent/sync/checkin", method="POST", payload=payload)
+    return data
+
+
+def upload_display_json_to_cloud() -> dict:
+    payload = {}
+    for key, filename in (
+        ("daily_char_map", "daily_char_map.json"),
+        ("daily_meta_map", "daily_meta_map.json"),
+    ):
+        path = BASE_DIR / filename
+        if path.exists():
+            payload[key] = json.loads(path.read_text(encoding="utf-8"))
+
+    if not payload:
+        return {"ok": True, "written": []}
+
+    data, _status = request_cloud("/agent/sync/display-json", method="POST", payload=payload)
+    return data
+
+
+def upload_metas_to_cloud() -> dict:
+    data, _status = request_cloud("/agent/sync/metas", method="POST", payload={"metas": fetch_metas_payload()})
+    return data
+
+
+def sync_cloud_once() -> dict:
+    checkin_cloud()
+    queue_payload, _status = request_cloud("/agent/sync/queue")
+    items = queue_payload.get("items", [])
+    processed = []
+    errors = []
+
+    for item in items:
+        item_id = item.get("id")
+        text = item.get("text")
+        if not item_id:
+            errors.append({"id": None, "error": "missing queue item id"})
+            continue
+        try:
+            save_text_to_agent(str(text or ""))
+            request_cloud(f"/agent/sync/queue/{item_id}", method="DELETE")
+            processed.append(item_id)
+        except Exception as e:
+            errors.append({"id": item_id, "error": str(e)})
+
+    upload_result = {}
+    if processed:
+        upload_result = upload_display_json_to_cloud()
+    meta_upload_result = upload_metas_to_cloud()
+
+    last_error = "; ".join(f"{e['id']}: {e['error']}" for e in errors) if errors else None
+    checkin_cloud(processed=len(processed), last_error=last_error)
+
+    return {
+        "ok": not errors,
+        "processed": processed,
+        "errors": errors,
+        "uploaded": upload_result,
+        "metas_uploaded": meta_upload_result,
+    }
+
+
+def sync_cloud_loop() -> None:
+    while True:
+        try:
+            result = sync_cloud_once()
+            print(json.dumps(result, ensure_ascii=False), flush=True)
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False), flush=True)
+            try:
+                checkin_cloud(last_error=str(e))
+            except Exception:
+                pass
+        time.sleep(max(5, CLOUD_SYNC_INTERVAL_SECONDS))
 
 
 @app.after_request
@@ -747,4 +875,12 @@ def consume_inbox():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "cloud-sync-once":
+        print(json.dumps(sync_cloud_once(), ensure_ascii=False, indent=2))
+        raise SystemExit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "cloud-sync-loop":
+        sync_cloud_loop()
+        raise SystemExit(0)
+
     app.run(host="0.0.0.0", port=8787, debug=False)

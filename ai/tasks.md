@@ -95,10 +95,10 @@
 
 当前真实结构：
 - 首页是公开展示页：监控占位 + 底部 Heatmap
-- Pad 是管理员工作区：登录后写入、读取 entry/metas、检查 Agent 状态
+- Pad 是管理员工作区：登录后写入云端队列、查看队列、检查 Agent 同步状态
 - Heatmap 暂时继续读导出的 JSON
 - 已新增 `cloud_api.py`，本地开发环境可以拆成 `web` / `cloud-api` / `agent`
-- 当前 `cloud_api.py -> agent` 的 Docker 内网转发只适合本地三容器测试，不是最终云端方案
+- 当前正式方向是本地 `agent.py` 主动访问云端 `cloud_api.py`，不要求云端能访问本地电脑
 
 目标结构：
 - `web`：静态页面，公开首页和 Pad UI
@@ -121,13 +121,16 @@
 - 服务器端文件队列：`POST /queue`、`GET /queue`、`DELETE /queue/<id>`、`POST /queue/<id>/save`
 - Docker Web + cloud-api + Agent 本地开发编排
 - agent 离线时，Pad 仍可登录并把写入内容保存到 `server_queue/`
+- cloud-api 已增加 agent sync token、check-in / last_seen、展示 JSON 上传接口
+- agent.py 已增加 `cloud-sync-once` / `cloud-sync-loop`，可主动拉取云端队列并上传展示 JSON
+- Pad 状态已改为查看 cloud-api 的 Agent last_seen
+- agent 已主动上传 metas 快照，Pad 可从 cloud-api 刷新 meta 列表和完成次数
+- Pad 已移除远程查看 entry；历史记录只在本地 agent / 本地数据里查看
 
 剩余核心问题：
-- 最终云端部署不能依赖 `cloud_api -> agent` 内网转发
-- 需要改成本地 agent 主动拉取 cloud_api 队列
-- agent 处理完成后需要把最新 heatmap JSON 上传回 cloud_api / web 数据目录
 - meta 管理接口还没做
 - README / tasks 还要持续跟真实数据流同步
+- 历史 entry 不做云端读取，避免 cloud-api 持有完整本地记录
 
 原则：
 - 首页只展示，不直接暴露写入能力
@@ -177,7 +180,7 @@
 
 # Phase 4.6：真实云端同步模型
 
-状态：下一步
+状态：最小闭环已完成
 
 目标：
 - cloud-api 只负责云端登录、队列和 agent 状态
@@ -185,14 +188,16 @@
 - agent 处理完成后上传最新展示 JSON，供首页 Heatmap 使用
 
 任务：
-- cloud-api 增加 agent sync token 校验
-- cloud-api 增加 agent check-in / last_seen
-- cloud-api 增加展示 JSON 上传接口，供 agent 更新 `daily_char_map.json` / `daily_meta_map.json`
-- agent.py 增加 cloud sync 命令或后台循环
-- agent.py 主动拉取云端 queue 并逐条保存到本地 DB / daily_logs / JSON
-- 保存成功后删除云端 queue item
-- agent.py 上传最新展示 JSON 回云端
-- Pad 状态从“直连 agent”改成“查看 cloud-api last_seen”
+- ~~cloud-api 增加 agent sync token 校验~~
+- ~~cloud-api 增加 agent check-in / last_seen~~
+- ~~cloud-api 增加展示 JSON 上传接口，供 agent 更新 `daily_char_map.json` / `daily_meta_map.json`~~
+- ~~agent.py 增加 cloud sync 命令或后台循环~~
+- ~~agent.py 主动拉取云端 queue 并逐条保存到本地 DB / daily_logs / JSON~~
+- ~~保存成功后删除云端 queue item~~
+- ~~agent.py 上传最新展示 JSON 回云端~~
+- ~~Pad 状态从“直连 agent”改成“查看 cloud-api last_seen”~~
+- ~~agent.py 主动上传 metas 只读快照，Pad 的 `/metas` 从 cloud-api 快照读取~~
+- ~~Pad 移除远程 entry 查看入口；entry 只保留本地读取~~
 
 预期数据流：
 - 多端 Pad 写记录

@@ -175,7 +175,7 @@
     <section class="panel pad-intro">
       <h1 class="page-title" style="margin-top: 0;">写记录</h1>
       <p class="page-intro">
-        编辑当天内容，保存到 Agent。
+        编辑当天内容，保存到云端队列；本地 Agent 在线后会主动同步。
       </p>
     </section>
 
@@ -192,24 +192,24 @@
     <section id="pad-workspace" class="pad-shell" hidden>
       <h2>Daily Record</h2>
       <div class="pad-toolbar">
-        <label for="api-base-url">Agent 地址</label>
-        <input id="api-base-url" type="text" placeholder="/api or http://127.0.0.1:8787" />
+        <label for="api-base-url">Cloud API 地址</label>
+        <input id="api-base-url" type="text" placeholder="/api" />
         <button onclick="saveApiBaseUrl()">保存地址</button>
-        <button onclick="checkPadAgentStatus()">检查连接</button>
+        <button onclick="checkPadAgentStatus()">检查同步状态</button>
         <button onclick="logoutPad()">退出</button>
         <span id="api-base-status" class="pad-status-text"></span>
       </div>
 
       <div class="status-strip">
         <div class="status-card">
-          <div class="status-label">Agent</div>
+          <div class="status-label">Agent Sync</div>
           <div id="pad-agent-state" class="status-value status-warn">未检查</div>
-          <div id="pad-agent-detail" class="status-detail">等待连接测试</div>
+          <div id="pad-agent-detail" class="status-detail">等待 cloud-api last_seen</div>
         </div>
         <div class="status-card">
           <div class="status-label">Database</div>
           <div id="pad-db-state" class="status-value status-warn">未检查</div>
-          <div id="pad-db-detail" class="status-detail">等待 /db_health 返回</div>
+          <div id="pad-db-detail" class="status-detail">本地私有数据由 Agent 同步</div>
         </div>
         <div class="status-card">
           <div class="status-label">Metas</div>
@@ -245,19 +245,12 @@
       <div id="preview-container">
         <pre id="preview-text" class="pad-preview"></pre>
         <button onclick="copyPreview()">复制到剪贴板</button>
-        <button onclick="sendToAgent()">发送到Agent</button>
+        <button onclick="sendToAgent()">加入云端队列</button>
         <div id="agent-status" style="margin-top: 8px; font-size: 13px;"></div>
       </div>
 
-      <h3>按日期查看记录</h3>
-      <div class="pad-toolbar">
-        <input id="entry-date" type="date" />
-        <button onclick="showEntryByDate()">查看 entry</button>
-        <span id="entry-fetch-status" class="pad-status-text"></span>
-      </div>
-
       <dialog id="entry-dialog">
-        <h3 id="entry-dialog-title">记录详情</h3>
+        <h3 id="entry-dialog-title">待同步记录</h3>
         <pre id="entry-dialog-content" class="pad-preview"></pre>
         <div style="margin-top: 12px;">
           <button onclick="closeEntryDialog()">关闭</button>
@@ -266,7 +259,7 @@
 
       <h3>待同步队列（<span id="pending-count">0</span>）</h3>
       <div class="pad-toolbar">
-        <button onclick="retryAllPending()">全部尝试同步</button>
+        <button onclick="retryAllPending()">刷新队列</button>
         <span id="pending-status" class="pad-status-text"></span>
       </div>
       <div id="pending-queue" class="pad-panel"></div>
@@ -279,7 +272,7 @@
   <script>
     const DEFAULT_API_BASE_URL = window.location.protocol.startsWith("http")
       ? `${window.location.origin}/api`
-      : "http://127.0.0.1:8787";
+      : "http://127.0.0.1:8788";
     const DEFAULT_METAS = [
       { key: "english", label: "英语" },
       { key: "program", label: "Program" },
@@ -317,7 +310,7 @@
         refreshMetasFromAgent();
         checkPadAgentStatus();
       } catch (e) {
-        if (statusEl) statusEl.textContent = "登录失败：无法连接到 agent（" + (e?.message || e) + "）";
+        if (statusEl) statusEl.textContent = "登录失败：无法连接到 cloud-api（" + (e?.message || e) + "）";
       }
     }
 
@@ -377,7 +370,7 @@
         return;
       }
       localStorage.setItem(API_BASE_KEY, value);
-      if (statusEl) statusEl.textContent = "已保存 Agent 地址";
+      if (statusEl) statusEl.textContent = "已保存 Cloud API 地址";
     }
 
     function setPadStatus(kind, state, detail, tone) {
@@ -401,16 +394,24 @@
     }
 
     async function checkPadAgentStatus() {
-      setPadStatus("agent", "检查中", "正在请求 /ping", "warn");
-      setPadStatus("db", "检查中", "正在请求 /db_health", "warn");
+      setPadStatus("agent", "检查中", "正在请求 /agent/status", "warn");
+      setPadStatus("db", "云端模式", "cloud-api 不主动访问本地数据库", "warn");
       setPadStatus("metas", "检查中", "正在请求 /metas", "warn");
 
       try {
-        const ping = await readAgentJson("/ping");
-        setPadStatus("agent", "在线", ping?.msg || "Agent 已响应", "ok");
+        const status = await readAgentJson("/agent/status");
+        if (status?.online) {
+          const detail = status.last_seen ? `最近同步 ${status.last_seen}; 队列 ${status.queue_count || 0} 条` : "Agent 已 check-in";
+          setPadStatus("agent", "在线", detail, "ok");
+        } else if (status?.last_seen) {
+          const age = Number.isFinite(status.age_seconds) ? `${status.age_seconds}s 前` : "未知时间";
+          setPadStatus("agent", "离线", `上次同步 ${age}; 队列 ${status.queue_count || 0} 条`, "bad");
+        } else {
+          setPadStatus("agent", "未同步", `还没有 Agent check-in; 队列 ${status.queue_count || 0} 条`, "warn");
+        }
       } catch (e) {
-        setPadStatus("agent", "离线", e?.message || "无法连接 Agent", "bad");
-        setPadStatus("db", "跳过", "Agent 不在线，无法检查数据库", "warn");
+        setPadStatus("agent", "未知", e?.message || "无法连接 cloud-api", "bad");
+        setPadStatus("db", "跳过", "无法连接 cloud-api", "warn");
         setPadStatus("metas", "跳过", "Agent 不在线，无法读取 metas", "warn");
         return;
       }
@@ -421,7 +422,7 @@
         const foreignKeys = health?.foreign_keys ? "foreign_keys on" : "foreign_keys off";
         setPadStatus("db", health?.ok ? "可用" : "异常", `${foreignKeys}; ${tables}`, health?.ok ? "ok" : "bad");
       } catch (e) {
-        setPadStatus("db", "异常", e?.message || "数据库检查失败", "bad");
+        setPadStatus("db", "本地私有", e?.message || "cloud-api 不读取本地数据库", "warn");
       }
 
       try {
@@ -429,7 +430,7 @@
         const count = Array.isArray(metas?.metas) ? metas.metas.length : 0;
         setPadStatus("metas", `${count} 个`, "已读取 meta 定义", count > 0 ? "ok" : "warn");
       } catch (e) {
-        setPadStatus("metas", "异常", e?.message || "metas 读取失败", "bad");
+        setPadStatus("metas", "未同步", e?.message || "metas 读取失败", "warn");
       }
     }
 
@@ -553,10 +554,6 @@
         viewBtn.textContent = "查看";
         viewBtn.addEventListener("click", () => showPendingEntry(item.id));
 
-        const submitBtn = document.createElement("button");
-        submitBtn.textContent = "发送到 Agent";
-        submitBtn.addEventListener("click", () => submitPendingEntry(item.id));
-
         const deleteBtn = document.createElement("button");
         deleteBtn.textContent = "删除";
         deleteBtn.addEventListener("click", async () => {
@@ -568,7 +565,6 @@
         row.appendChild(dateEl);
         row.appendChild(metaEl);
         row.appendChild(viewBtn);
-        row.appendChild(submitBtn);
         row.appendChild(deleteBtn);
         container.appendChild(row);
       });
@@ -604,66 +600,11 @@
           renderMetas();
         }
 
-        await syncTodayEntryFromAgent({ silentNotFound: true });
-
         if (statusEl) {
           statusEl.textContent = `已从接口刷新 ${nextList.length} 个 meta 和完成次数`;
         }
       } catch (e) {
-        if (statusEl) statusEl.textContent = "刷新失败：无法连接到 agent（" + (e?.message || e) + "）";
-      }
-    }
-
-    function applyEntryToPad(data) {
-      const entry = data.entry || {};
-      const contentEl = document.getElementById("daily-content");
-      const metaNotesEl = document.getElementById("meta-notes");
-
-      if (contentEl) {
-        contentEl.value = entry.content || "";
-      }
-
-      if (metaNotesEl) {
-        metaNotesEl.value = entry.meta_notes || "";
-        localStorage.setItem(META_NOTES_KEY, metaNotesEl.value);
-      }
-
-      (data.metas || []).forEach((meta) => {
-        const key = meta.meta_key;
-        if (!key) return;
-
-        localStorage.setItem(`meta-count-${key}`, String(meta.count || 0));
-        todayChecks[key] = false;
-        todayApplied[key] = Boolean(meta.done);
-      });
-
-      renderMetas();
-      updatePreview();
-    }
-
-    async function syncTodayEntryFromAgent(options = {}) {
-      const statusEl = document.getElementById("entry-fetch-status");
-      const entryDate = getTodayString();
-
-      try {
-        const resp = await apiFetch(`/entry?date=${encodeURIComponent(entryDate)}`);
-        const data = await resp.json().catch(() => null);
-
-        if (!resp.ok || !data?.ok) {
-          if (!options.silentNotFound || resp.status !== 404) {
-            if (statusEl) statusEl.textContent = "读取失败：" + (data?.error || ("HTTP " + resp.status));
-          }
-          return false;
-        }
-
-        applyEntryToPad(data);
-        if (statusEl) statusEl.textContent = "已读取今天的 entry";
-        return true;
-      } catch (e) {
-        if (!options.silentNotFound && statusEl) {
-          statusEl.textContent = "读取失败：无法连接到 agent（" + (e?.message || e) + "）";
-        }
-        return false;
+        if (statusEl) statusEl.textContent = "刷新失败：无法连接到 cloud-api（" + (e?.message || e) + "）";
       }
     }
 
@@ -891,36 +832,11 @@
         await renderPendingQueue();
         if (statusEl) {
           const warningText = data?.warning ? `（${data.warning}）` : "";
-          if (data?.queued) {
-            statusEl.textContent = "已加入服务器待同步队列";
-          } else {
-            statusEl.textContent = "成功：" + (data?.message || "ok") + warningText;
-          }
+          statusEl.textContent = data?.queued ? "已加入云端待同步队列" : "成功：" + (data?.message || "ok") + warningText;
         }
       } catch (e) {
         await queueAfterFailedSend(text, statusEl, e?.name === "AbortError" ? "请求超时" : (e?.message || e));
       }
-    }
-
-    function buildEntryDialogText(data) {
-      const entry = data.entry || {};
-      const metas = data.metas || [];
-      const metaLines = metas.map((meta) =>
-        `${meta.label}: ${meta.count} ${meta.unit || ""}${meta.done ? " +" : ""}`.trim()
-      );
-
-      return [
-        `日期：${entry.entry_date || ""}`,
-        "",
-        "正文：",
-        entry.content || "（空）",
-        "",
-        "Metas：",
-        metaLines.length ? metaLines.join("\n") : "（无）",
-        "",
-        "Meta Notes：",
-        entry.meta_notes || "（无）",
-      ].join("\n");
     }
 
     function closeEntryDialog() {
@@ -971,76 +887,10 @@
       }
     }
 
-    async function submitPendingEntry(itemId) {
-      const statusEl = document.getElementById("pending-status");
-
-      if (statusEl) statusEl.textContent = `正在发送 ${itemId}...`;
-      try {
-        const resp = await apiFetch(`/queue/${encodeURIComponent(itemId)}/save`, { method: "POST" });
-        const data = await resp.json().catch(() => null);
-        if (!resp.ok || !data?.ok) {
-          if (statusEl) statusEl.textContent = `${itemId} 发送失败：` + (data?.error || ("HTTP " + resp.status));
-          return;
-        }
-
-        if (statusEl) statusEl.textContent = `${data.date || itemId} 已发送到 Agent`;
-        await renderPendingQueue();
-      } catch (e) {
-        if (statusEl) statusEl.textContent = `${itemId} 发送失败：无法连接到 Agent（${e?.message || e}）`;
-      }
-    }
-
     async function retryAllPending() {
       const statusEl = document.getElementById("pending-status");
-      let items = [];
-      try {
-        const resp = await apiFetch("/queue");
-        const data = await resp.json().catch(() => null);
-        if (!resp.ok || !data?.ok) {
-          throw new Error(data?.error || ("HTTP " + resp.status));
-        }
-        items = data.items || [];
-      } catch (e) {
-        if (statusEl) statusEl.textContent = "读取队列失败：" + (e?.message || e);
-        return;
-      }
-
-      if (items.length === 0) {
-        if (statusEl) statusEl.textContent = "当前没有待同步记录";
-        return;
-      }
-
-      if (statusEl) statusEl.textContent = `开始尝试同步 ${items.length} 条记录...`;
-      for (const item of items) {
-        await submitPendingEntry(item.id);
-      }
-    }
-
-    async function showEntryByDate() {
-      const dateInput = document.getElementById("entry-date");
-      const statusEl = document.getElementById("entry-fetch-status");
-      const entryDate = dateInput?.value?.trim();
-
-      if (!entryDate) {
-        if (statusEl) statusEl.textContent = "请先选择日期";
-        return;
-      }
-
-      if (statusEl) statusEl.textContent = "读取 entry 中...";
-
-      try {
-        const resp = await apiFetch(`/entry?date=${encodeURIComponent(entryDate)}`);
-        const data = await resp.json().catch(() => null);
-        if (!resp.ok || !data?.ok) {
-          if (statusEl) statusEl.textContent = "读取失败：" + (data?.error || ("HTTP " + resp.status));
-          return;
-        }
-
-        openTextDialog(`${entryDate} 的记录`, buildEntryDialogText(data));
-        if (statusEl) statusEl.textContent = "读取成功";
-      } catch (e) {
-        if (statusEl) statusEl.textContent = "读取失败：无法连接到 agent（" + (e?.message || e) + "）";
-      }
+      await renderPendingQueue();
+      if (statusEl) statusEl.textContent = "已刷新队列；本地 Agent 会主动拉取处理";
     }
 
     document.getElementById("daily-content").addEventListener("input", updatePreview);
@@ -1052,11 +902,6 @@
         localStorage.setItem(META_NOTES_KEY, metaNotesEl.value);
         updatePreview();
       });
-    }
-
-    const entryDateEl = document.getElementById("entry-date");
-    if (entryDateEl) {
-      entryDateEl.value = getTodayString();
     }
 
     syncApiBaseInput();

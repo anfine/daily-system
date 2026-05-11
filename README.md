@@ -8,19 +8,20 @@
 ## 功能概览
 - 归档：从聊天或输入日志里提取每日内容，写入 `daily_logs/YYYY/MM/DD.md`
 - 统计：生成 `daily_meta_map.json` 与 `daily_char_map.json`
-- Agent：提供 HTTP 接口保存日记、更新统计，并可自动 scp 到服务器
+- Agent：在本地保存日记、更新统计，并主动同步云端队列
 
 ## 目录结构
 - `archive_daily.py`：解析日志片段并写入 `daily_logs`
 - `build_daily_char_meta_map.py`：遍历 `daily_logs` 生成统计 JSON
-- `agent.py`：Flask 服务端，提供 `/ping` `/db_health` `/entry` `/metas` `/echo` `/save` `/consume_inbox`
+- `cloud_api.py`：云端 Flask API，负责管理员登录、服务器队列、Agent last_seen、展示 JSON 上传
+- `agent.py`：本地私有 Agent，提供本地接口，并可运行 `cloud-sync-loop` 主动拉取云端队列
 - `daily_logs/`：按日期归档的日记内容
 - `daily_meta_map.json`：每日 meta 结构化统计
 - `daily_char_map.json`：每日字符数统计
 - `agent_inbox/`：Agent 暂存文本
 - `inbox/`：原始输入文件目录（可选）
 - `daily_pad_with_meta_notes.html`：写日记的网页
-- `heatmap/index.html`：简单日历展示页，依赖两个 JSON 数据文件
+- `web/site/data/`：云端展示 JSON 目录，供首页 Heatmap 读取
 
 ## 安装与运行
 ### 依赖
@@ -36,22 +37,21 @@ python -m venv .venv
 
 Agent 默认监听 `http://127.0.0.1:8787`，可用 `GET /ping` 测试。
 
-管理员登录：
+管理员登录与同步：
 - Docker 模式下由 `cloud-api` 负责登录、限速和云端队列。
 - 本地或 Docker 启动前设置 `ADMIN_PASSWORD`。
 - Docker 可同时设置 `ADMIN_SESSION_SECRET`，用于签名登录 session。
 - `POST /auth/login` 已按 IP 限速：1 分钟内失败 5 次后锁定 10 分钟。
-- Docker 模式下 `agent` 只通过 Docker 网络暴露给 `cloud-api`，不再把 `8787` 直接映射到宿主机。
 - 生产环境可设置 `ALLOWED_ORIGINS` 收紧 CORS，例如 `https://example.com`。
-- `LOCAL_AGENT_URL` 默认是 `http://agent:8787`；这是本地三容器开发用的临时转发地址。
-- `INTERNAL_AGENT_TOKEN` 用于本地开发时 `cloud-api` 到 `agent` 的内部转发。
-- 真实云端部署时，应改成本地 `agent` 主动访问云端 `cloud-api`，而不是云端主动访问本地 `agent`。
+- `AGENT_SYNC_TOKEN` 用于本地 Agent 调用云端 `/agent/sync/*`，必须和 cloud-api 配置一致。
+- `CLOUD_API_URL` 是本地 Agent 能访问到的云端地址，例如 `https://example.com/api`。
+- 真实云端部署时，云端不主动访问本地 `agent`；本地 `agent` 主动拉取云端队列并上传展示 JSON。
 
 ```bash
 export ADMIN_PASSWORD="your-password"
 export ADMIN_SESSION_SECRET="replace-with-a-long-random-string"
 export ALLOWED_ORIGINS="https://example.com"
-export INTERNAL_AGENT_TOKEN="replace-with-another-long-random-string"
+export AGENT_SYNC_TOKEN="replace-with-another-long-random-string"
 docker compose up -d --build
 ```
 
@@ -61,13 +61,25 @@ docker compose up -d --build
 docker compose stop agent
 ```
 
-此时 Pad 应仍可登录，保存内容会进入云端队列 `server_queue/`。重新启动本地 agent 后，可继续验证队列发送到 agent 的本地开发链路。
+此时 Pad 应仍可登录，保存内容会进入云端队列 `server_queue/`。重新启动本地 agent 后，`agent.py cloud-sync-loop` 会主动拉取队列，写入本地 SQLite / Markdown / JSON，再上传 `daily_char_map.json` 和 `daily_meta_map.json` 到 `web/site/data/`。
 
-下一阶段的真实云端同步模型：
+真实云端同步模型：
 - 多端 Pad 写入内容到云端 `cloud-api` 队列。
 - 本地 `agent` 主动拉取云端队列。
 - `agent` 写入本地 SQLite / Markdown / JSON。
 - `agent` 上传最新展示 JSON 回云端，首页 Heatmap 读取云端 JSON。
+
+本地 Agent 手动同步一次：
+```bash
+export CLOUD_API_URL="https://example.com/api"
+export AGENT_SYNC_TOKEN="same-token-as-cloud-api"
+python agent.py cloud-sync-once
+```
+
+持续同步：
+```bash
+python agent.py cloud-sync-loop
+```
 
 ## 使用说明
 ### 1) 归档（archive_daily.py）
@@ -98,28 +110,36 @@ python build_daily_char_meta_map.py
 
 ### 3) Agent 接口（agent.py）
 
-认证接口：
+云端接口（cloud_api.py）：
 - `POST /auth/login`：提交管理员密码，成功后写入 session cookie
 - `POST /auth/logout`：退出登录
 - `GET /auth/me`：检查当前登录状态
+- `POST /save`：把完整文本写入云端待同步队列
+- `GET /queue`：列出云端待同步队列
+- `GET /queue/<id>`：读取队列项全文
+- `DELETE /queue/<id>`：删除队列项
+- `GET /agent/status`：查看本地 Agent 最近 check-in 和队列数量
+- `GET /metas`：读取 Agent 主动上传的 meta 快照，供 Pad 初始化 meta 列表和完成次数
+- `POST /agent/sync/checkin`：Agent token 接口，更新 last_seen
+- `GET /agent/sync/queue`：Agent token 接口，拉取队列全文
+- `DELETE /agent/sync/queue/<id>`：Agent token 接口，删除已处理队列项
+- `POST /agent/sync/display-json`：Agent token 接口，上传展示 JSON
+- `POST /agent/sync/metas`：Agent token 接口，上传 meta 快照
 
-除 `/auth/*` 外，下面所有接口都需要管理员登录。
+本地接口（agent.py）：
 
 基础健康检查：
 - `GET /ping`：检查 agent 是否存活，并返回数据库健康状态
 - `GET /db_health`：检查 SQLite 连通性、`foreign_keys` 状态和当前业务表
 
-读取接口：
+本地读取接口：
 - `GET /entry?date=YYYY-MM-DD`：按日期读取单天记录，返回当天正文、字符数、meta notes，以及当天各个 meta 的状态
-- `GET /metas`：读取所有 meta 定义，适合前端初始化 meta 列表
+- `GET /metas`：读取所有 meta 定义，适合本地调试或生成云端 meta 快照
+
+云端 Pad 不读取历史 entry；历史记录保留在本地 agent / SQLite / Markdown 中查看。云端 Pad 只通过 cloud-api 读取 agent 主动上传的 `/metas` 快照。
 
 写入接口：
 - `POST /save`：保存文本并更新统计；参数 `text` 第一行是日期，格式 `YYYY-MM-DD`
-- `POST /queue`：把完整文本保存到服务器待同步文件队列
-- `GET /queue`：列出服务器待同步队列
-- `GET /queue/<id>`：读取队列项全文
-- `DELETE /queue/<id>`：删除队列项
-- `POST /queue/<id>/save`：将队列项交给 `/save` 流程处理，成功后删除队列项
 - `POST /consume_inbox`：批量消费 `agent_inbox/*.txt` 并更新统计
 - `POST /echo`：测试用，写入 `_agent_debug.json`
 
@@ -210,7 +230,7 @@ curl -X POST "http://127.0.0.1:8787/save" \
 }
 ```
 
-注意：`agent.py` 内置 `scp` 逻辑会把 JSON 同步到服务器，若不需要请自行注释或修改远端地址。
+注意：旧的 scp 同步默认关闭。只有设置 `LEGACY_SCP_REMOTE` 时，`agent.py` 才会继续把 JSON scp 到旧服务器路径。
 
 ### 4) 网页说明
 - `daily_pad_with_meta_notes.html`：写日记的网页页面。

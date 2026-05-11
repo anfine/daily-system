@@ -10,6 +10,7 @@ inbox/
 old_script/
 agent_inbox/
 server_queue/
+agent_state/
 _agent_debug.json
 tempCodeRunnerFile.py
 .venv/

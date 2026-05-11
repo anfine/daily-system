@@ -5,9 +5,6 @@ import hmac
 import json
 import os
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 
 
@@ -42,10 +39,14 @@ app.config.update(
 )
 
 QUEUE_DIR = BASE_DIR / "server_queue"
+DISPLAY_DATA_DIR = Path(os.environ.get("DISPLAY_DATA_DIR", BASE_DIR / "web/site/data"))
+AGENT_STATE_FILE = Path(os.environ.get("AGENT_STATE_FILE", BASE_DIR / "agent_state.json"))
+META_SNAPSHOT_FILE = Path(os.environ.get("META_SNAPSHOT_FILE", BASE_DIR / "meta_snapshot.json"))
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-LOCAL_AGENT_URL = os.environ.get("LOCAL_AGENT_URL", "http://agent:8787").rstrip("/")
-INTERNAL_AGENT_TOKEN = os.environ.get("INTERNAL_AGENT_TOKEN", "dev-internal-token")
+AGENT_SYNC_TOKEN = os.environ.get("AGENT_SYNC_TOKEN", "")
+AGENT_ONLINE_WINDOW_SECONDS = int(os.environ.get("AGENT_ONLINE_WINDOW_SECONDS", "120"))
 AUTH_EXEMPT_PATHS = {"/auth/login", "/auth/logout", "/auth/me"}
+AGENT_SYNC_PATH_PREFIX = "/agent/sync/"
 ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
     for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
@@ -66,6 +67,98 @@ def get_client_ip() -> str:
 
 def is_logged_in() -> bool:
     return bool(session.get("admin_logged_in"))
+
+
+def is_agent_sync_request() -> bool:
+    token = request.headers.get("X-Agent-Sync-Token", "")
+    return bool(AGENT_SYNC_TOKEN) and hmac.compare_digest(token, AGENT_SYNC_TOKEN)
+
+
+def read_agent_state() -> dict:
+    if not AGENT_STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(AGENT_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def write_agent_state(state: dict) -> None:
+    AGENT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = AGENT_STATE_FILE.with_suffix(f"{AGENT_STATE_FILE.suffix}.tmp")
+    tmp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(AGENT_STATE_FILE)
+
+
+def build_agent_status() -> dict:
+    state = read_agent_state()
+    last_seen_ts = state.get("last_seen_ts")
+    now = time.time()
+    age_seconds = None
+    if isinstance(last_seen_ts, (int, float)):
+        age_seconds = max(0, int(now - last_seen_ts))
+
+    return {
+        "ok": True,
+        "last_seen": state.get("last_seen"),
+        "last_seen_ts": last_seen_ts,
+        "age_seconds": age_seconds,
+        "online": age_seconds is not None and age_seconds <= AGENT_ONLINE_WINDOW_SECONDS,
+        "processed_total": int(state.get("processed_total", 0)),
+        "last_sync": state.get("last_sync"),
+        "last_error": state.get("last_error"),
+        "queue_count": len(list_queue_items()),
+    }
+
+
+def update_agent_checkin(payload: dict | None = None) -> dict:
+    now = time.time()
+    state = read_agent_state()
+    state.update({
+        "last_seen": datetime.datetime.fromtimestamp(now).isoformat(),
+        "last_seen_ts": now,
+    })
+    if payload:
+        for key in ("last_sync", "last_error"):
+            if key in payload:
+                state[key] = payload.get(key)
+        if "processed" in payload:
+            state["processed_total"] = int(state.get("processed_total", 0)) + int(payload.get("processed") or 0)
+    write_agent_state(state)
+    return build_agent_status()
+
+
+def write_display_json(name: str, value: dict) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} must be an object")
+
+    DISPLAY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    target = DISPLAY_DATA_DIR / f"{name}.json"
+    tmp_path = target.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(target)
+
+
+def read_meta_snapshot() -> dict | None:
+    if not META_SNAPSHOT_FILE.exists():
+        return None
+    try:
+        return json.loads(META_SNAPSHOT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def write_meta_snapshot(metas: list[dict]) -> dict:
+    payload = {
+        "ok": True,
+        "metas": metas,
+        "updated_at": datetime.datetime.now().isoformat(),
+    }
+    META_SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = META_SNAPSHOT_FILE.with_suffix(f"{META_SNAPSHOT_FILE.suffix}.tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(META_SNAPSHOT_FILE)
+    return payload
 
 
 def get_login_lock_remaining(client_ip: str) -> int:
@@ -149,51 +242,15 @@ def list_queue_items() -> list[dict]:
     return [build_queue_item(path) for path in sorted(QUEUE_DIR.glob("*.txt"))]
 
 
-class AgentRequestError(Exception):
-    def __init__(self, status: int, payload: dict | None = None, message: str = "agent request failed"):
-        super().__init__(message)
-        self.status = status
-        self.payload = payload or {"ok": False, "error": message}
-
-
-def request_agent(path: str, method: str = "GET", payload: dict | None = None, timeout: float = 1.2) -> tuple[dict, int]:
-    url = f"{LOCAL_AGENT_URL}{path}"
-    data = None
-    headers = {"Accept": "application/json"}
-    if INTERNAL_AGENT_TOKEN:
-        headers["X-Internal-Agent-Token"] = INTERNAL_AGENT_TOKEN
-    if payload is not None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw) if raw else {}, resp.status
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8")
-        try:
-            error_payload = json.loads(raw) if raw else None
-        except json.JSONDecodeError:
-            error_payload = {"ok": False, "error": raw or e.reason}
-        raise AgentRequestError(e.code, error_payload, str(e)) from e
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
-        raise AgentRequestError(503, {"ok": False, "error": "agent unavailable"}, str(e)) from e
-
-
-def proxy_agent_json(path: str, method: str = "GET", payload: dict | None = None):
-    try:
-        data, status = request_agent(path, method=method, payload=payload)
-    except AgentRequestError as e:
-        return jsonify(e.payload), e.status
-    return jsonify(data), status
-
-
 @app.before_request
 def require_admin_login():
     if request.method == "OPTIONS":
         return "", 204
+
+    if request.path.startswith(AGENT_SYNC_PATH_PREFIX):
+        if is_agent_sync_request():
+            return None
+        return jsonify({"ok": False, "error": "invalid agent sync token"}), 403
 
     if request.path in AUTH_EXEMPT_PATHS:
         return None
@@ -211,7 +268,7 @@ def add_cors_headers(resp):
         resp.headers["Access-Control-Allow-Origin"] = origin
         resp.headers["Vary"] = "Origin"
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type,X-Agent-Sync-Token"
     resp.headers["Access-Control-Allow-Credentials"] = "true"
     return resp
 
@@ -266,29 +323,90 @@ def auth_me():
 
 @app.get("/ping")
 def ping():
-    try:
-        agent, _status = request_agent("/ping", timeout=1.0)
-    except AgentRequestError:
-        agent = {"ok": False, "error": "agent unavailable"}
+    return jsonify({"ok": True, "msg": "cloud api alive", "agent": build_agent_status()})
 
-    return jsonify({"ok": True, "msg": "cloud api alive", "agent": agent})
+
+@app.get("/agent/status")
+def agent_status():
+    return jsonify(build_agent_status())
+
+
+@app.post("/agent/sync/checkin")
+def agent_sync_checkin():
+    data = request.get_json(silent=True) or {}
+    return jsonify(update_agent_checkin(data))
+
+
+@app.get("/agent/sync/queue")
+def agent_sync_get_queue():
+    items = []
+    for item in list_queue_items():
+        item_path = get_queue_item_path(item["id"])
+        items.append({**item, "text": item_path.read_text(encoding="utf-8")})
+    return jsonify({"ok": True, "items": items})
+
+
+@app.delete("/agent/sync/queue/<item_id>")
+def agent_sync_delete_queue_item(item_id):
+    try:
+        item_path = get_queue_item_path(item_id)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not item_path.exists():
+        return jsonify({"ok": False, "error": "queue item not found"}), 404
+    item_path.unlink()
+    return jsonify({"ok": True})
+
+
+@app.post("/agent/sync/display-json")
+def agent_sync_display_json():
+    data = request.get_json(silent=True) or {}
+    written = []
+    try:
+        if "daily_char_map" in data:
+            write_display_json("daily_char_map", data["daily_char_map"])
+            written.append("daily_char_map.json")
+        if "daily_meta_map" in data:
+            write_display_json("daily_meta_map", data["daily_meta_map"])
+            written.append("daily_meta_map.json")
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    if not written:
+        return jsonify({"ok": False, "error": "no display json provided"}), 400
+
+    update_agent_checkin({"last_sync": datetime.datetime.now().isoformat(), "last_error": None})
+    return jsonify({"ok": True, "written": written})
+
+
+@app.post("/agent/sync/metas")
+def agent_sync_metas():
+    data = request.get_json(silent=True) or {}
+    metas = data.get("metas")
+    if not isinstance(metas, list):
+        return jsonify({"ok": False, "error": "metas must be a list"}), 400
+
+    payload = write_meta_snapshot(metas)
+    update_agent_checkin({"last_sync": datetime.datetime.now().isoformat(), "last_error": None})
+    return jsonify({"ok": True, "count": len(payload["metas"]), "updated_at": payload["updated_at"]})
 
 
 @app.get("/db_health")
 def db_health():
-    return proxy_agent_json("/db_health")
+    return jsonify({"ok": False, "error": "local agent data is not reachable from cloud-api"}), 503
 
 
 @app.get("/metas")
 def get_metas():
-    return proxy_agent_json("/metas")
+    snapshot = read_meta_snapshot()
+    if snapshot is None:
+        return jsonify({"ok": False, "error": "meta snapshot is not available yet"}), 503
+    return jsonify(snapshot)
 
 
 @app.get("/entry")
 def get_entry():
-    query = urllib.parse.urlencode(request.args)
-    path = f"/entry?{query}" if query else "/entry"
-    return proxy_agent_json(path)
+    return jsonify({"ok": False, "error": "local agent data is not reachable from cloud-api"}), 503
 
 
 @app.post("/save")
@@ -297,13 +415,6 @@ def save():
     text = data.get("text")
     if str(text).strip() == "":
         return jsonify({"ok": False, "error": "empty text"}), 400
-
-    try:
-        payload, status = request_agent("/save", method="POST", payload={"text": str(text)}, timeout=1.2)
-        return jsonify(payload), status
-    except AgentRequestError as e:
-        if e.status < 500:
-            return jsonify(e.payload), e.status
 
     try:
         item = queue_text(str(text))
@@ -369,18 +480,11 @@ def save_queue_item(item_id):
     if not item_path.exists():
         return jsonify({"ok": False, "error": "queue item not found"}), 404
 
-    text = item_path.read_text(encoding="utf-8")
-    try:
-        payload, status = request_agent("/save", method="POST", payload={"text": text}, timeout=1.2)
-    except AgentRequestError as e:
-        return jsonify({**e.payload, "queue_item_id": item_id}), e.status
-
-    if 200 <= status < 300 and payload.get("ok"):
-        item_path.unlink()
-        payload["queue_item_id"] = item_id
-        payload["queue_removed"] = True
-
-    return jsonify(payload), status
+    return jsonify({
+        "ok": False,
+        "error": "queue items are saved by local agent sync; wait for agent check-in",
+        "queue_item_id": item_id,
+    }), 409
 
 
 if __name__ == "__main__":

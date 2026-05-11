@@ -10,8 +10,6 @@ services:
     volumes:
       - ./web/site:/usr/share/nginx/html:ro
       - ./web/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./daily_char_map.json:/usr/share/nginx/html/data/daily_char_map.json:ro
-      - ./daily_meta_map.json:/usr/share/nginx/html/data/daily_meta_map.json:ro
 
   cloud-api:
     build: .
@@ -23,29 +21,30 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-dev-change-me}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      LOCAL_AGENT_URL: ${LOCAL_AGENT_URL:-http://agent:8787}
-      INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN:-dev-internal-token}
+      AGENT_SYNC_TOKEN: ${AGENT_SYNC_TOKEN:-dev-agent-sync-token}
+      DISPLAY_DATA_DIR: /app/cloud_data
+      AGENT_STATE_FILE: /app/agent_state/agent_state.json
+      META_SNAPSHOT_FILE: /app/agent_state/meta_snapshot.json
     expose:
       - "8788"
     volumes:
       - ./server_queue:/app/server_queue
+      - ./web/site/data:/app/cloud_data
+      - ./agent_state:/app/agent_state
 
   agent:
     build: .
     image: daily-system-agent:latest
     container_name: daily-system-agent
     restart: unless-stopped
+    command: ["python", "agent.py", "cloud-sync-loop"]
     environment:
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-dev-change-me}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      INTERNAL_AGENT_TOKEN: ${INTERNAL_AGENT_TOKEN:-dev-internal-token}
-    expose:
-      - "8787"
+      CLOUD_API_URL: ${CLOUD_API_URL:-http://cloud-api:8788}
+      AGENT_SYNC_TOKEN: ${AGENT_SYNC_TOKEN:-dev-agent-sync-token}
+      CLOUD_SYNC_INTERVAL_SECONDS: ${CLOUD_SYNC_INTERVAL_SECONDS:-30}
     volumes:
       - ./daily_system.db:/app/daily_system.db
       - ./daily_logs:/app/daily_logs
       - ./daily_meta_map.json:/app/daily_meta_map.json
       - ./daily_char_map.json:/app/daily_char_map.json
       - ./agent_inbox:/app/agent_inbox
-      - ./server_queue:/app/server_queue
