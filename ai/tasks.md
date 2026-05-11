@@ -126,7 +126,7 @@
 - Pad 状态已改为查看 cloud-api 的 Agent last_seen
 - agent 已主动上传 metas 快照，Pad 可从 cloud-api 刷新 meta 列表和完成次数
 - Pad 已移除远程查看 entry；历史记录只在本地 agent / 本地数据里查看
-- Docker Compose 已加入 Prometheus / Grafana / node-exporter / cadvisor
+- Docker Compose 已加入 Prometheus / Grafana / node-exporter
 - 首页监控区已嵌入 Grafana dashboard
 
 剩余核心问题：
@@ -218,7 +218,7 @@
 状态：配置已完成，待服务器联调
 
 目标：
-- 云端本机监控服务器资源、Docker 容器和 daily-system 同步状态
+- 云端本机监控服务器资源和 daily-system 同步状态
 - 首页直接嵌入 Grafana dashboard
 - 不暴露 Prometheus / Grafana 内部端口，统一走站点反代
 
@@ -226,9 +226,8 @@
 - ~~Docker Compose 增加 Prometheus~~
 - ~~Docker Compose 增加 Grafana~~
 - ~~Docker Compose 增加 node-exporter~~
-- ~~Docker Compose 增加 cadvisor~~
 - ~~cloud_api.py 增加 `/metrics`~~
-- ~~Prometheus 抓取 cloud-api / node-exporter / cadvisor~~
+- ~~Prometheus 抓取 cloud-api / node-exporter~~
 - ~~Grafana provisioning 增加 Prometheus 数据源和 Daily System dashboard~~
 - ~~首页监控区嵌入 Grafana dashboard~~
 - 服务器实际启动并验证 dashboard 渲染

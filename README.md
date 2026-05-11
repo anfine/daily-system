@@ -82,7 +82,7 @@ python agent.py cloud-sync-loop
 ```
 
 监控：
-- 云端 Compose 内置 `prometheus`、`grafana`、`node-exporter`、`cadvisor`。
+- 云端 Compose 内置 `prometheus`、`grafana`、`node-exporter`。
 - 首页监控区嵌入 Grafana dashboard：`/grafana/d/daily-system-overview/daily-system-overview?orgId=1&kiosk&theme=dark`。
 - Grafana 通过 nginx 子路径 `/grafana/` 访问，默认允许匿名只读和 iframe 嵌入。
 - `cloud_api.py` 暴露 `/metrics`，Prometheus 会抓取队列数、agent 在线状态、last_seen 延迟和 meta 快照状态。
@@ -90,7 +90,7 @@ python agent.py cloud-sync-loop
 
 启动云端网站和监控：
 ```bash
-docker compose up -d --build web cloud-api prometheus grafana node-exporter cadvisor
+docker compose up -d --build web cloud-api prometheus grafana node-exporter
 ```
 
 ## 使用说明
