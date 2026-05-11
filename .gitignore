@@ -4,6 +4,7 @@ daily_system.db
 
 # derived data (can be regenerated)
 *.json
+!monitoring/grafana/provisioning/dashboards/*.json
 
 # temporary / workspace
 inbox/
